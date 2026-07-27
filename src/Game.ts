@@ -1,131 +1,148 @@
+// Top-level game controller.
+// Coordinates two rendering layers:
+//   - a Phaser 2D overlay (transparent canvas, on top) that plays the intro
+//     video and the cloud-sweep transition;
+//   - a 3D scene (its own Three.js canvas, beneath), rendering immediately so
+//     it's ready behind the intro and revealed as the clouds part.
+// Currently the 3D scene is the clean IslandScene (orthographic isometric).
+// To use the full farm instead, swap IslandScene for FarmBoot below — the farm
+// code in src/farm + src/three + src/config is left intact.
+// Forwards SDK lifecycle events (resize/pause/resume/volume) to both layers.
+//
+// DEBUG START: with `debugStart` on in src/config/debugConfig.ts (or the
+// ?debugStart= query param in dev) the overlay is never created and the chosen
+// scene boots on its own — no intro video, no cloud wipe.
 import { sdk } from '@smoud/playable-sdk';
 import * as Phaser from 'phaser';
-// Using assets/* alias configured in tsconfig.json for direct assets import
-import buttonBg from 'assets/button.png';
+import { OverlayScene } from './overlay/OverlayScene';
+import { IslandScene } from './scenes/IslandScene';
+import { resolveDebugStart, type DebugScene } from './config/debugConfig';
 
-class MainScene extends Phaser.Scene {
-  private installButton!: Phaser.GameObjects.Container;
-
-  constructor() {
-    super({ key: 'MainScene' });
-  }
-
-  preload() {
-    this.load.image('button', buttonBg);
-  }
-
-  create() {
-    // Set up resize listener
-    sdk.on('resize', this.resize, this);
-
-    // Create container for button positioning
-    this.installButton = this.add.container(this.cameras.main.centerX, this.cameras.main.centerY);
-
-    // Create animation container
-    const animationContainer = this.add.container(0, 0);
-    this.installButton.add(animationContainer);
-
-    // Create button sprite
-    const buttonBackground = this.add.image(0, 0, 'button');
-    buttonBackground.setScale(0.35);
-
-    // Create text
-    const installText = this.add
-      .text(0, 0, 'Install', {
-        fontFamily: 'cursive',
-        fontSize: '35px',
-        color: '#ffffff',
-        fontStyle: 'bold'
-      })
-      .setOrigin(0.5);
-
-    // Add shadow to text
-    installText.setShadow(4, 4, '#fffc6a', 9, true, true);
-
-    // Add elements to animation container
-    animationContainer.add([buttonBackground, installText]);
-
-    // Add pulsing animation to the animation container
-    this.tweens.add({
-      targets: animationContainer,
-      scaleX: 1.1,
-      scaleY: 1.1,
-      duration: 800,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut'
-    });
-
-    // Make button interactive
-    buttonBackground.setInteractive({ useHandCursor: true });
-    buttonBackground.on('pointerdown', () => sdk.install());
-
-    // Set up interaction listener
-    sdk.on('interaction', (count: number) => {
-      console.log(`Interaction count: ${count}`);
-
-      if (sdk.interactions >= 10) {
-        sdk.finish();
-      }
-    });
-
-    sdk.start();
-  }
-
-  private resize = (width: number, height: number) => {
-    // Calculate scale based on screen dimensions
-    const scaleX = width / 320;
-    const scaleY = height / 480;
-    const scale = Math.min(scaleX, scaleY); // Use smaller scale to fit both dimensions
-
-    if (this.installButton) {
-      this.installButton.setPosition(width / 2, height / 2);
-      this.installButton.setScale(scale);
-    }
-  };
-
-  shutdown() {
-    // Clean up listeners when scene is shut down
-    sdk.off('resize', this.resize, this);
-  }
+/** Everything the coordinator needs from whichever 3D layer is active. */
+interface PlayableScene {
+  resize(width: number, height: number): void;
+  pause(): void;
+  resume(): void;
+  destroy(): void;
 }
 
-export class Game extends Phaser.Game {
+export class Game {
+  private overlay?: Phaser.Game; // absent on a debug start
+  private island?: PlayableScene;
+  private width: number;
+  private height: number;
+  private paused = false;
+  private finished = false;
+
   constructor(width: number, height: number) {
-    super({
+    this.width = width;
+    this.height = height;
+
+    // Signal to the SDK that the playable is ready and the experience begins.
+    sdk.start();
+
+    const debug = resolveDebugStart();
+    if (debug.enabled) {
+      console.log(`[debugStart] booting "${debug.scene}" — intro skipped`);
+      void this.startDebugScene(debug.scene);
+      return;
+    }
+
+    // Start the 3D scene right away so it's already rendering (behind the video)
+    // by the time the clouds part.
+    this.island = new IslandScene(width, height);
+
+    // Callbacks the overlay scene fires as the transition progresses.
+    // Set before boot so the scene can read them in create().
+    this.overlay = new Phaser.Game({
       type: Phaser.AUTO,
       width,
       height,
-      backgroundColor: '#1c1c1c',
+      transparent: true, // let the Three.js canvas show through
       parent: document.body,
-      scale: {
-        mode: Phaser.Scale.NONE, // We'll handle scaling manually
-        autoCenter: Phaser.Scale.CENTER_BOTH
-      },
-      scene: MainScene
+      scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.NO_CENTER },
+      scene: OverlayScene
     });
+    this.overlay.registry.set('hooks', {
+      onCovered: () => this.revealScene(),
+      onDone: () => {}
+    });
+
+    // Keep the overlay canvas on top of the Three.js canvas.
+    const canvas = this.overlay.canvas;
+    canvas.style.position = 'absolute';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.zIndex = '10';
   }
 
+  /**
+   * Build the scene named by debugStart and adopt it as the active layer.
+   * Farm/Scene3D are imported lazily so their models and textures only enter
+   * the bundle in dev — `__DEV__` is false in release builds, so webpack drops
+   * this whole branch (and everything it pulls in) from the shipped playable.
+   */
+  private async startDebugScene(name: DebugScene): Promise<void> {
+    let scene: PlayableScene;
+
+    if (__DEV__ && name === 'farm') {
+      const { FarmBoot } = await import('./farm/FarmBoot');
+      scene = new FarmBoot(this.width, this.height);
+    } else if (__DEV__ && name === 'scene3d') {
+      const { Scene3D } = await import('./scenes/Scene3D');
+      scene = new Scene3D(this.width, this.height);
+    } else {
+      scene = new IslandScene(this.width, this.height);
+    }
+
+    // Lifecycle events can land while the dynamic import is in flight, so apply
+    // whatever state accumulated in the meantime.
+    if (this.finished) {
+      scene.destroy();
+      return;
+    }
+    this.island = scene;
+    scene.resize(this.width, this.height);
+    if (this.paused) scene.pause();
+  }
+
+  /** Called at full cloud coverage. The scene is already rendering underneath. */
+  private revealScene(): void {
+    // Scene is started in the constructor; nothing to build here yet.
+  }
+
+  private get overlayScene(): OverlayScene | undefined {
+    return this.overlay?.scene.getScene('Overlay') as OverlayScene | undefined;
+  }
+
+  // --- SDK lifecycle events, forwarded to both layers ---
+
   public resize(width: number, height: number): void {
-    this.scale.resize(width, height);
+    this.width = width;
+    this.height = height;
+    this.overlay?.scale.resize(width, height);
+    this.island?.resize(width, height);
   }
 
   public pause(): void {
-    this.scene.pause('MainScene');
-    console.log('Game paused');
+    this.paused = true;
+    this.overlayScene?.setPaused(true);
+    this.island?.pause();
   }
 
   public resume(): void {
-    this.scene.resume('MainScene');
-    console.log('Game resumed');
+    this.paused = false;
+    this.overlayScene?.setPaused(false);
+    this.island?.resume();
   }
 
   public volume(value: number): void {
-    this.sound.setVolume(value);
-    console.log(`Volume changed to: ${value}`);
+    this.overlayScene?.setVolume(value);
   }
 
   public finish(): void {
-    console.log('Game finished');
+    this.finished = true;
+    this.overlay?.destroy(true);
+    this.island?.destroy();
   }
 }

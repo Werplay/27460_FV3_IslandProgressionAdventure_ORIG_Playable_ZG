@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "outDir": "./dist",
+    "rootDir": "./",
     "target": "es5",
     "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
@@ -13,7 +14,8 @@
     "strictPropertyInitialization": false,
     "module": "esnext",
     "moduleResolution": "bundler",
-    "sourceMap": true,      
+    "sourceMap": true,
+    "ignoreDeprecations": "6.0",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "paths": {
