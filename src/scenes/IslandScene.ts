@@ -3,14 +3,48 @@
 // is orthographic, the water reads as an even border on every side of the island
 // (no perspective horizon), which is the classic Hay Day / FarmVille map look.
 import * as THREE from 'three';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { createIslandWater } from '../three/IslandWater.js';
 import grassTextureSrc from 'assets/images/Ground3.jpg';
+// Webpack cannot inline a raw .fbx (no mimetype for it), and a playable has to
+// build to one self-contained file — so the model ships as a base64 data URI,
+// regenerated with `node scripts_fbx2base64.mjs assets/models/B_Boat.fbx`.
+import boatSrc from 'assets/models/B_Boat.fbx.js';
+import boatTextureSrc from 'assets/images/Buildings.jpg';
 
 const ISLAND_SIZE = 25; // grass land width/depth
 const ISLAND_HEIGHT = 2;
 const ISLAND_HALF = ISLAND_SIZE / 2;
 const FIT_RADIUS = 3; // world radius kept in frame (island + water margin)
 const GRASS_TINT = 0x8fe25a;
+const WATER_Y = -0.4; // must match the water plane in createIslandWater
+const SAND_EDGE = ISLAND_HALF + 1; // outer edge of the beach skirt
+
+// Boat moored on the shoreline. x/z are where it sits in world space; the sand
+// edge is at SAND_EDGE (13.5), so an |x| slightly beyond that puts it in the
+// water just off the beach. At the current camera (FIT_RADIUS 3, panned to
+// x -10) only the stretch around z -8..-2 of that -X shore is on screen — move
+// z within that range to slide the boat along the beach.
+const BOAT = {
+  x: -(SAND_EDGE + 0.8), // just past the sand, floating off the -X beach
+  z: -3,
+  yawDeg: 65,
+  // Hull length in world units. The island is ISLAND_SIZE (25) across, so 2 puts
+  // the boat at about a twelfth of the island's width. The camera frames
+  // 2 * FIT_RADIUS units, so at FIT_RADIUS 3 this fills a third of the screen —
+  // check both numbers when you change it.
+  length: 1.5,
+  // Where the waterline sits on the HULL: 0 = keel just skimming the surface,
+  // 1 = swamped to the deck. Measured against BOAT_HULL_FRACTION below, not the
+  // whole model, so the mast never drags the boat under.
+  draft: 0.15
+};
+
+// Measured from B_Boat.fbx: its vertices run Y -96.8 .. +184.7, but everything
+// above roughly +20 is mast and cabin — the wide hull is only the bottom ~41%.
+// The waterline has to be computed against the hull alone, or the boat sinks to
+// its gunwales.
+const BOAT_HULL_FRACTION = 0.41;
 
 // Camera orbit — rotates the view around the island. The island, beach and foam
 // ring are all axis-aligned to each other, so spinning the CAMERA is how you
@@ -112,6 +146,7 @@ export class IslandScene {
 
     this.addLights();
     this.addIsland();
+    this.addBoat();
 
     // Beach skirt + toon water, centered on the island. viewRadius tells the
     // water how much world is on screen so its blobs and foam scale with the
@@ -150,6 +185,56 @@ export class IslandScene {
     const island = new THREE.Mesh(geometry, [side, side, grass, side, side, side]);
     island.position.y = -ISLAND_HEIGHT / 2; // grass top sits at y = 0
     this.scene.add(island);
+  }
+
+  /**
+   * Boat moored on the shore. Loaded asynchronously, so it pops in a frame or
+   * two after the scene — harmless here because the intro covers the start.
+   */
+  private addBoat(): void {
+    // The FBX names an absolute Buildings.png from the authoring machine, which
+    // cannot resolve in a bundle, so we bind the project's copy of that atlas
+    // ourselves. flipY/sRGB match how the rest of the farm models are textured.
+    const texture = new THREE.TextureLoader().load(boatTextureSrc);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = false;
+
+    new FBXLoader().load(
+      boatSrc,
+      (model: THREE.Group) => {
+        const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 1 });
+        model.traverse((child: THREE.Object3D) => {
+          if ((child as THREE.Mesh).isMesh) (child as THREE.Mesh).material = material;
+        });
+
+        // FBX is authored in its own units (this one is ~396 long), so rather
+        // than guess a conversion factor we measure and scale to BOAT.length.
+        // Only the HORIZONTAL axes count: taking the largest of all three would
+        // let the mast decide the scale and leave the hull far too small.
+        const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+        model.scale.setScalar(BOAT.length / Math.max(size.x, size.z));
+
+        // Re-measure after scaling, then seat the model on its own WATERLINE
+        // rather than its keel — the parent group sits exactly at the water
+        // surface, so BOAT.draft alone decides how deep the hull sits and the
+        // sea can never cut across the deck. The group also owns the yaw, so
+        // turning spins the boat about itself instead of about the world origin.
+        const box = new THREE.Box3().setFromObject(model);
+        const centre = box.getCenter(new THREE.Vector3());
+        const hullHeight = (box.max.y - box.min.y) * BOAT_HULL_FRACTION;
+        const waterline = box.min.y + hullHeight * BOAT.draft;
+        model.position.set(-centre.x, -waterline, -centre.z);
+
+        const pivot = new THREE.Group();
+        pivot.name = 'boat';
+        pivot.add(model);
+        pivot.position.set(BOAT.x, WATER_Y, BOAT.z);
+        pivot.rotation.y = THREE.MathUtils.degToRad(BOAT.yawDeg);
+        this.scene.add(pivot);
+      },
+      undefined,
+      (err: unknown) => console.error('Boat model failed to load:', err)
+    );
   }
 
   /** Orthographic frustum that fits FIT_RADIUS on any aspect ratio. */

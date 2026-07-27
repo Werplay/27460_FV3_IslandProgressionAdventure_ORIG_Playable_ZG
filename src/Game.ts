@@ -1,17 +1,3 @@
-// Top-level game controller.
-// Coordinates two rendering layers:
-//   - a Phaser 2D overlay (transparent canvas, on top) that plays the intro
-//     video and the cloud-sweep transition;
-//   - a 3D scene (its own Three.js canvas, beneath), rendering immediately so
-//     it's ready behind the intro and revealed as the clouds part.
-// Currently the 3D scene is the clean IslandScene (orthographic isometric).
-// To use the full farm instead, swap IslandScene for FarmBoot below — the farm
-// code in src/farm + src/three + src/config is left intact.
-// Forwards SDK lifecycle events (resize/pause/resume/volume) to both layers.
-//
-// DEBUG START: with `debugStart` on in src/config/debugConfig.ts (or the
-// ?debugStart= query param in dev) the overlay is never created and the chosen
-// scene boots on its own — no intro video, no cloud wipe.
 import { sdk } from '@smoud/playable-sdk';
 import * as Phaser from 'phaser';
 import { OverlayScene } from './overlay/OverlayScene';

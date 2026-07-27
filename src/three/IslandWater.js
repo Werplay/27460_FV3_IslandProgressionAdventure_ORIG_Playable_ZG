@@ -130,8 +130,8 @@ const WATER_FRAG = /* glsl */ `
  */
 const WATER = {
   // --- the flat sheet ---
-  waterColor: 0x40b8ee, // the one base colour of the open sea
-  patchColor: 0x8adcf7, // the lighter blue of the scattered patches
+  waterColor: 0x5fc9f2, // the one base colour of the open sea
+  patchColor: 0xa2e6fa, // the lighter blue of the scattered patches
   foamColor: 0xffffff,
 
   // --- how the detail scales with the camera ---
@@ -146,8 +146,8 @@ const WATER = {
   // --- scattered light patches ---
   patchScaleBig: 0.6, // noise frequency of the large blobs. higher = smaller, busier
   patchScaleSmall: 1.62, // frequency of the small flecks
-  patchThresholdBig: 0.62, // cut point. HIGHER = fewer and smaller patches
-  patchThresholdSmall: 0.72, // these two give patches over roughly a quarter of the sea
+  patchThresholdBig: 0.7, // cut point. HIGHER = fewer and smaller patches
+  patchThresholdSmall: 0.8, // these two scatter patches over roughly a tenth of the sea
   patchSoftness: 0.04, // edge feather. keep tiny — this is what makes them crisp cut-outs
   patchOpacity: 1.0, // 1 = flat solid patches, lower = tinted
   patchDrift: 0.03, // slow drift so the sea is not frozen. 0 = perfectly still
