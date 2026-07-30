@@ -34,6 +34,10 @@ import bridgeRestoredSrc from 'assets/models/Bridge_Restored.glb';
 // The tree is one of the farm's own GLBs, so it is the exception: flipY FALSE,
 // and its foliage is an alpha CUTOUT on the vegetation atlas.
 import treeSrc from 'assets/models/Tree_Round.glb';
+// Another of the farm's own GLBs, so flipY FALSE, on the shorthorn atlas that
+// its material asks for.
+import cowSrc from 'assets/models/A_Cow_Angus.glb';
+import cowTextureSrc from 'assets/images/A_Cow_Shorthorn.jpg';
 import pointerSrc from 'assets/images/PointerHand.png';
 import woodSrc from 'assets/images/Wood.png';
 import bubbleSrc from 'assets/images/speechBubble.png';
@@ -324,6 +328,92 @@ const ARRIVAL = {
   ease: 1.1 // seconds for the move
 };
 
+// Crossing it, once it is whole again.
+//
+// They go over in lanes rather than abreast: the deck is 1.94 wide between its
+// railings and the pair stands 1.5 apart, which would put a shoulder through
+// each railing. Half a metre either side of the centre line takes them over
+// cleanly, and since one starts on each side of it they converge into their
+// lanes without their paths ever crossing.
+const CROSSING = {
+  lane: 0.4, // either side of the deck's centre line
+  beyond: 1.3, // how far onto the far bank they carry on before pulling up
+  delay: 0.4, // seconds after the smoke clears before they set off
+  // The planks sit a little above the grass — measured off the model, not
+  // guessed — so they step up onto the deck and back down at the far end
+  // instead of wading through it.
+  deckY: 0.08,
+  edge: 0.35 // how much of each end that step-up is spread over
+};
+
+// Off the bridge and on. The far bank has a cow penned in behind a stand of
+// trees; clearing them lets it out.
+//
+// Everything here hangs off COW_STOP, which is worked out the same way the
+// crossing is: the deck's far end is STREAM.x + half the span, they carry on
+// CROSSING.beyond past it, then walk FORWARD.distance further. So moving the
+// stream or the run moves this whole scene with it.
+const FORWARD = {
+  distance: 2, // world units off the end of the bridge
+  headingDeg: 90 // straight along +X, which is where the far bank opens up
+};
+
+const COW_STOP = {
+  x: STREAM.x + BRIDGE.span / 2 + CROSSING.beyond + FORWARD.distance,
+  z: BRIDGE.z // the two lanes sit either side of it, so their middle is on it
+};
+
+// The cow. Its take is one 391-frame baked clip, split the way the farm's own
+// config splits it — idle, eating, then happy at the end.
+const COW = {
+  height: 0.78, // 0.87x a character: a cow's head is a little below a person's
+  offset: { x: 3.5, z: -0.5 }, // from COW_STOP
+  yawDeg: 250, // turned back towards the pair, so it is looking at them
+  idle: { startFrame: 1, endFrame: 156 },
+  happy: { startFrame: 309, endFrame: 391 },
+  joinSpeed: 0.75, // world units per second once it is freed
+  joinGap: 1.15 // how close it comes before settling
+};
+
+// The trees penning it in: a ring around the cow, not a screen in front of it.
+//
+// The ring is left OPEN on the camera's side so the cow can be seen inside it —
+// a closed ring, or the row of trees this replaced, hides the thing the player
+// is being asked to rescue. gapBearingDeg is where that opening points, and it
+// has to match the direction the camera looks from: VIEW_YAW_DEG 65 and
+// VIEW_ELEV_DEG 20 put the camera on a bearing of 25 degrees from anything on
+// the ground. Re-derive it if the camera moves — atan2(ISO_DIR.x, ISO_DIR.z),
+// which is declared further down this file and so cannot be read from here.
+//
+// Verified at these numbers: every tree that stands between the camera and the
+// cow clears its silhouette by at least 0.36, and the ones behind frame it.
+const COW_TREES = {
+  height: 1.6, // a touch shorter than the wood grove, which keeps the ring open
+  count: 5,
+  radius: 2.15, // from the cow. Below about 2 the flanking pair starts to cover it
+  gapBearingDeg: 25
+};
+
+// The ring, worked out around the cow and handed back as offsets from COW_STOP
+// like every other placement here.
+const COW_TREE_OFFSETS = Array.from({ length: COW_TREES.count }, (_, i) => {
+  // count + 1 slots, and the first is skipped: that missing tree is the gap.
+  const step = 360 / (COW_TREES.count + 1);
+  const bearing = THREE.MathUtils.degToRad(COW_TREES.gapBearingDeg + step * (i + 1));
+  return {
+    x: COW.offset.x + Math.sin(bearing) * COW_TREES.radius,
+    z: COW.offset.z + Math.cos(bearing) * COW_TREES.radius
+  };
+});
+
+// The shot for that beat, solved from the screen bounds of the pair, the trees
+// and the cow — same method as ARRIVAL.
+const COW_SHOT = {
+  fit: FIT_RADIUS,
+  offset: { x: 2.33, z: -0.05 }, // from COW_STOP
+  ease: 1
+};
+
 // What the characters tell the player to do, and how it is drawn.
 //
 // The bubble is one 197x155 PNG with its tail on the LEFT, so it hangs off the
@@ -380,25 +470,9 @@ const SPEECH = {
 const SPEECH_LINES = {
   rubble: 'Tap the rocks!',
   trees: 'Chop 3 trees!',
+  freeCow: 'Free the cow!',
+  cowJoined: 'She\u2019s free!\nLet\u2019s go!',
   cross: "Bridge fixed!\nLet's go!"
-};
-
-// Crossing it, once it is whole again.
-//
-// They go over in lanes rather than abreast: the deck is 1.94 wide between its
-// railings and the pair stands 1.5 apart, which would put a shoulder through
-// each railing. Half a metre either side of the centre line takes them over
-// cleanly, and since one starts on each side of it they converge into their
-// lanes without their paths ever crossing.
-const CROSSING = {
-  lane: 0.4, // either side of the deck's centre line
-  beyond: 1.3, // how far onto the far bank they carry on before pulling up
-  delay: 0.4, // seconds after the smoke clears before they set off
-  // The planks sit a little above the grass — measured off the model, not
-  // guessed — so they step up onto the deck and back down at the far end
-  // instead of wading through it.
-  deckY: 0.08,
-  edge: 0.35 // how much of each end that step-up is spread over
 };
 
 // The camera goes with them, but only once they have run up to the middle of
@@ -657,8 +731,12 @@ export class IslandScene {
     radius: number;
     top: number;
     chopped: boolean;
+    grove: 'wood' | 'cow'; // what felling it is for
   }> = [];
-  private choppingOpen = false; // only once they have run up to the bank
+  // Which stand is live. There are two — the one that pays for the bridge and
+  // the one penning the cow in — and only ever one of them answers to a tap.
+  private grove?: 'wood' | 'cow';
+  private cow?: { pivot: THREE.Group; idle: THREE.AnimationAction; happy: THREE.AnimationAction };
   private wood = 0;
   // Live zoom, so the arrival can open the shot out. FIT_RADIUS is the start.
   private fitRadius = FIT_RADIUS;
@@ -706,6 +784,7 @@ export class IslandScene {
     this.addPath();
     this.addBridge();
     this.addTrees();
+    this.addCow();
 
     // Taps are read off the WINDOW in the capture phase, not off this canvas:
     // Game.ts parks the Phaser overlay on top at z-index 10, and a canvas takes
@@ -1154,7 +1233,7 @@ export class IslandScene {
     if (!this.actions.length) return;
 
     const farX = this.deck ? this.deck.maxX : STREAM.x + BRIDGE.span / 2;
-    this.afterRun = undefined; // the far bank is the end of the road for now
+    this.afterRun = () => this.walkOnward(); // the far bank is not the end
 
     this.actions.forEach((entry) => {
       const from = entry.pivot.position;
@@ -1234,31 +1313,49 @@ export class IslandScene {
    * live once it has.
    */
   private arriveAtBridge(): void {
-    this.choppingOpen = true;
-
-    const from = this.cameraTarget.clone();
-    const to = new THREE.Vector3(
-      RUN_STOP.x + ARRIVAL.offset.x,
-      CAMERA_FOLLOW.aimHeight,
-      RUN_STOP.z + ARRIVAL.offset.z
+    this.moveCamera(
+      new THREE.Vector3(
+        RUN_STOP.x + ARRIVAL.offset.x,
+        CAMERA_FOLLOW.aimHeight,
+        RUN_STOP.z + ARRIVAL.offset.z
+      ),
+      ARRIVAL.fit,
+      ARRIVAL.ease,
+      () => {
+        // The hand and the instruction both wait for the move to settle.
+        this.grove = 'wood';
+        this.pointAtNextTree();
+        this.say(SPEECH_LINES.trees);
+      }
     );
+  }
+
+  /**
+   * Ease the shot to a new place and zoom, then hand back. Every beat that
+   * reframes goes through here, so they all move the same way.
+   */
+  private moveCamera(
+    to: THREE.Vector3,
+    fit: number,
+    ease: number,
+    done?: () => void
+  ): void {
+    const from = this.cameraTarget.clone();
     const fromFit = this.fitRadius;
 
     let elapsed = 0;
     this.effects.push((delta: number) => {
       elapsed += delta;
-      const k = THREE.MathUtils.smoothstep(elapsed, 0, ARRIVAL.ease);
+      const k = THREE.MathUtils.smoothstep(elapsed, 0, ease);
 
       this.cameraTarget.lerpVectors(from, to, k);
-      this.fitRadius = THREE.MathUtils.lerp(fromFit, ARRIVAL.fit, k);
+      this.fitRadius = THREE.MathUtils.lerp(fromFit, fit, k);
       this.camera.position.copy(ISO_DIR).multiplyScalar(CAM_DISTANCE).add(this.cameraTarget);
       this.camera.lookAt(this.cameraTarget);
       this.updateCamera();
 
-      if (elapsed < ARRIVAL.ease) return true;
-      // The hand and the next instruction both wait for the move to settle.
-      this.pointAtNextTree();
-      this.say(SPEECH_LINES.trees);
+      if (elapsed < ease) return true;
+      if (done) done();
       return false;
     });
   }
@@ -1426,45 +1523,176 @@ export class IslandScene {
         });
 
         const size = new THREE.Box3().setFromObject(source).getSize(new THREE.Vector3());
-        const baseScale = TREES.height / size.y;
 
-        TREES.offsets.forEach((offset, i) => {
-          const tree = source.clone(true);
-          tree.scale.setScalar(baseScale * (0.85 + jitter(i, 21) * 0.3));
+        // Two stands from the one model: the grove that pays for the bridge,
+        // and the one penning the cow in on the far bank.
+        const plant = (
+          grove: 'wood' | 'cow',
+          height: number,
+          anchor: { x: number; z: number },
+          offsets: Array<{ x: number; z: number }>,
+          seed: number
+        ) => {
+          const baseScale = height / size.y;
 
-          // Centred on its trunk and stood on the grass, so the pivot it hangs
-          // from is the point it will topple about.
-          const box = new THREE.Box3().setFromObject(tree);
-          const centre = box.getCenter(new THREE.Vector3());
-          tree.position.set(-centre.x, -box.min.y, -centre.z);
+          offsets.forEach((offset, n) => {
+            const i = n + seed;
+            const tree = source.clone(true);
+            tree.scale.setScalar(baseScale * (0.85 + jitter(i, 21) * 0.3));
 
-          const pivot = new THREE.Group();
-          pivot.name = `tree${i}`;
-          pivot.add(tree);
-          pivot.position.set(RUN_STOP.x + offset.x, 0, RUN_STOP.z + offset.z);
-          pivot.rotation.y = jitter(i, 22) * Math.PI * 2;
-          this.scene.add(pivot);
+            // Centred on its trunk and stood on the grass, so the pivot it
+            // hangs from is the point it will topple about.
+            const box = new THREE.Box3().setFromObject(tree);
+            const centre = box.getCenter(new THREE.Vector3());
+            tree.position.set(-centre.x, -box.min.y, -centre.z);
 
-          // Tap target, sized off the trunk rather than the canopy: a padded
-          // canopy on a 2.2u tree would swallow a third of the screen.
-          const stood = new THREE.Box3().setFromObject(pivot);
-          const spread = stood.getSize(new THREE.Vector3());
-          this.trees.push({
-            pivot,
-            centre: new THREE.Vector3(
-              pivot.position.x,
-              TREES.height * 0.45,
-              pivot.position.z
-            ),
-            radius: (Math.max(spread.x, spread.z) / 2) * CHOP.hitPadding,
-            top: stood.max.y,
-            chopped: false
+            const pivot = new THREE.Group();
+            pivot.name = `${grove}Tree${n}`;
+            pivot.add(tree);
+            pivot.position.set(anchor.x + offset.x, 0, anchor.z + offset.z);
+            pivot.rotation.y = jitter(i, 22) * Math.PI * 2;
+            this.scene.add(pivot);
+
+            // Tap target, sized off the trunk rather than the canopy: a padded
+            // canopy on a tree this size would swallow a third of the screen.
+            const stood = new THREE.Box3().setFromObject(pivot);
+            const spread = stood.getSize(new THREE.Vector3());
+            this.trees.push({
+              pivot,
+              centre: new THREE.Vector3(pivot.position.x, height * 0.45, pivot.position.z),
+              radius: (Math.max(spread.x, spread.z) / 2) * CHOP.hitPadding,
+              top: stood.max.y,
+              chopped: false,
+              grove
+            });
           });
-        });
+        };
+
+        plant('wood', TREES.height, RUN_STOP, TREES.offsets, 0);
+        plant('cow', COW_TREES.height, COW_STOP, COW_TREE_OFFSETS, 10);
       },
       undefined,
       (err: unknown) => console.error('Tree model failed to load:', err)
     );
+  }
+
+  /**
+   * The cow, penned in behind the far stand of trees. It chews away on its idle
+   * from the start — the player only meets it once the trees come down.
+   */
+  private addCow(): void {
+    const texture = new THREE.TextureLoader().load(cowTextureSrc);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = false; // a farm GLB, so the V-flipped convention
+    texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+
+    new GLTFLoader().load(
+      cowSrc,
+      (gltf: { scene: THREE.Group; animations: THREE.AnimationClip[] }) => {
+        const model = gltf.scene;
+        const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 1 });
+        model.traverse((child: THREE.Object3D) => {
+          const mesh = child as THREE.SkinnedMesh;
+          if (!mesh.isMesh) return;
+          mesh.material = material;
+          if (mesh.isSkinnedMesh) mesh.frustumCulled = false;
+        });
+
+        const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+        model.scale.setScalar(COW.height / size.y);
+
+        const box = new THREE.Box3().setFromObject(model);
+        const centre = box.getCenter(new THREE.Vector3());
+        model.position.set(-centre.x, -box.min.y, -centre.z);
+
+        const pivot = new THREE.Group();
+        pivot.name = 'cow';
+        pivot.add(model);
+        pivot.position.set(COW_STOP.x + COW.offset.x, 0, COW_STOP.z + COW.offset.z);
+        pivot.rotation.y = THREE.MathUtils.degToRad(COW.yawDeg);
+        this.scene.add(pivot);
+
+        const take = gltf.animations[0];
+        if (!take) return;
+
+        const mixer = new THREE.AnimationMixer(model);
+        const idle = mixer.clipAction(cutClip(take, 'cow-idle', COW.idle));
+        const happy = mixer.clipAction(cutClip(take, 'cow-happy', COW.happy));
+        idle.play();
+        this.mixers.push(mixer);
+        this.cow = { pivot, idle, happy };
+      },
+      undefined,
+      (err: unknown) => console.error('Cow model failed to load:', err)
+    );
+  }
+
+  /** Off the bridge and on up the far bank, to where the cow is penned in. */
+  private walkOnward(): void {
+    this.afterRun = () => this.meetCow();
+    const heading = THREE.MathUtils.degToRad(FORWARD.headingDeg);
+    this.actions.forEach((entry) => this.sendRunner(entry, heading, FORWARD.distance));
+  }
+
+  /** They pull up at the stand. The shot opens on it and the trees go live. */
+  private meetCow(): void {
+    this.moveCamera(
+      new THREE.Vector3(
+        COW_STOP.x + COW_SHOT.offset.x,
+        CAMERA_FOLLOW.aimHeight,
+        COW_STOP.z + COW_SHOT.offset.z
+      ),
+      COW_SHOT.fit,
+      COW_SHOT.ease,
+      () => {
+        this.grove = 'cow';
+        this.pointAtNextTree();
+        this.say(SPEECH_LINES.freeCow);
+      }
+    );
+  }
+
+  /**
+   * The last tree is down. The cow celebrates, then trots over to join them.
+   *
+   * Its take has an idle, an eating and a happy — but no walk — so the happy
+   * clip carries the move as well. A bouncing cow travelling reads far better
+   * than a still one sliding, which is what the idle would have given.
+   */
+  private rescueCow(): void {
+    const cow = this.cow;
+    if (!cow) return;
+
+    this.grove = undefined;
+    this.hideTapHint();
+    this.say(SPEECH_LINES.cowJoined, 4);
+
+    cow.happy.reset();
+    cow.happy.setLoop(THREE.LoopRepeat, Infinity);
+    cow.happy.play();
+    cow.happy.crossFadeFrom(cow.idle, 0.25, false);
+
+    // It heads for the near side of the pair and stops a cow's length short.
+    const target = new THREE.Vector3();
+    this.actions.forEach(({ pivot }) => target.add(pivot.position));
+    target.divideScalar(Math.max(this.actions.length, 1));
+
+    this.effects.push((delta: number) => {
+      const toward = target.clone().sub(cow.pivot.position).setY(0);
+      const left = toward.length() - COW.joinGap;
+      if (left > 0.01) {
+        toward.normalize();
+        cow.pivot.position.addScaledVector(toward, Math.min(COW.joinSpeed * delta, left));
+        // Face the way it is going, models here being authored towards +Z.
+        cow.pivot.rotation.y = Math.atan2(toward.x, toward.z);
+        return true;
+      }
+
+      cow.idle.reset();
+      cow.idle.play();
+      cow.idle.crossFadeFrom(cow.happy, 0.3, false);
+      return false;
+    });
   }
 
   /** A tap anywhere within the breakable rock's catchment sets it off. */
@@ -1493,8 +1721,10 @@ export class IslandScene {
       return;
     }
 
-    if (!this.choppingOpen) return;
-    const tree = this.trees.find((entry) => !entry.chopped && hits(entry.centre, entry.radius));
+    if (!this.grove) return;
+    const tree = this.trees.find(
+      (entry) => !entry.chopped && entry.grove === this.grove && hits(entry.centre, entry.radius)
+    );
     if (tree) this.chopTree(tree);
   };
 
@@ -1540,7 +1770,17 @@ export class IslandScene {
       return false;
     });
 
-    this.flyLog(tree.pivot.position.clone());
+    // The wood grove pays for the bridge; the far one is only in the way.
+    if (tree.grove === 'wood') {
+      this.flyLog(tree.pivot.position.clone());
+      return;
+    }
+
+    if (this.trees.some((entry) => entry.grove === 'cow' && !entry.chopped)) {
+      this.pointAtNextTree();
+      return;
+    }
+    this.rescueCow();
   }
 
   /** One log arcing from a felled tree to the bridge, and the count it feeds. */
@@ -1572,7 +1812,11 @@ export class IslandScene {
       sprite.removeFromParent();
       (sprite.material as THREE.SpriteMaterial).dispose();
       this.wood++;
-      if (this.wood >= this.trees.length) this.repairBridge();
+      // Against the WOOD grove only. this.trees also holds the stand penning
+      // the cow in on the far bank, and counting all six left the bridge
+      // waiting on three logs that were never coming.
+      const needed = this.trees.filter((entry) => entry.grove === 'wood').length;
+      if (this.wood >= needed) this.repairBridge();
       else this.pointAtNextTree();
       return false;
     });
@@ -1861,7 +2105,7 @@ export class IslandScene {
 
   /** Move the hand to whichever tree is still standing. */
   private pointAtNextTree(): void {
-    const next = this.trees.find((tree) => !tree.chopped);
+    const next = this.trees.find((tree) => !tree.chopped && tree.grove === this.grove);
     if (next) this.showTapHint(next.centre, next.top);
   }
 
