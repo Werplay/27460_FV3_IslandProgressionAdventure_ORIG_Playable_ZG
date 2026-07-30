@@ -389,8 +389,11 @@ const COW = {
 // cow clears its silhouette by at least 0.36, and the ones behind frame it.
 const COW_TREES = {
   height: 1.6, // a touch shorter than the wood grove, which keeps the ring open
-  count: 5,
-  radius: 2.15, // from the cow. Below about 2 the flanking pair starts to cover it
+  count: 4,
+  // From the cow. Pulled in with the count: four trees at 2.15 left gaps of 0.6
+  // between canopies and the ring stopped reading as one, where 1.9 brings them
+  // to 0.31 apart — still clear of the cow by 0.32 through the opening.
+  radius: 1.9,
   gapBearingDeg: 25
 };
 
@@ -410,7 +413,7 @@ const COW_TREE_OFFSETS = Array.from({ length: COW_TREES.count }, (_, i) => {
 // and the cow — same method as ARRIVAL.
 const COW_SHOT = {
   fit: FIT_RADIUS,
-  offset: { x: 2.33, z: -0.05 }, // from COW_STOP
+  offset: { x: 2.02, z: -1.61 }, // from COW_STOP; re-solved for the ring
   ease: 1
 };
 
