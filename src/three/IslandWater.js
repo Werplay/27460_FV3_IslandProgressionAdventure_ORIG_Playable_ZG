@@ -110,14 +110,27 @@ const WATER_FRAG = /* glsl */ `
     float d = max(abs(uv.x), abs(uv.y));
     float shore = d - uShoreEdge + (fbm4(uv * 0.4 + uTime * uShoreDrift) - 0.5) * uShoreWobble;
 
+    //    Both foam terms below are written as "1.0 - smoothstep(...)", so both
+    //    saturate to 1.0 for ANY point shoreward of the edge — everything inside
+    //    the island renders as solid foam white. That was free while the land
+    //    covered all of it, but a channel cut through the island (see the
+    //    channel option on createIslandWater) opens a window onto that water,
+    //    and it came through as a white stripe instead of a stream.
+    //
+    //    So the foam is gated to a band around the edge. The gate is still 1 at
+    //    the shoreline itself — the wobble only shifts shore by about ±0.11 there,
+    //    well inside the fade — so the sea is untouched, and it reaches 0 a
+    //    couple of haze-widths in, which is the water a channel exposes.
+    float atShore = smoothstep(-3.0 * uHazeWidth, -0.5 * uHazeWidth, shore);
+
     //    A wide, soft bloom of pale water fading out to sea...
     float haze = 1.0 - smoothstep(0.0, max(uHazeWidth, 0.0001), shore);
-    color = mix(color, uFoamColor, haze * uHazeStrength);
+    color = mix(color, uFoamColor, haze * uHazeStrength * atShore);
 
     //    ...and a brighter, tighter band hugging the sand itself.
     float rimSoft = max(uRimSoftness, 0.0001);
     float rim = 1.0 - smoothstep(uRimWidth - rimSoft, uRimWidth + rimSoft, shore);
-    color = mix(color, uFoamColor, rim);
+    color = mix(color, uFoamColor, rim * atShore);
 
     gl_FragColor = vec4(color, 1.0);
   }
@@ -171,7 +184,9 @@ const WATER = {
 /**
  * @param {{ islandHalf?: number, waterSize?: number, waterY?: number,
  *   beachSize?: number, viewRadius?: number, sunDir?: number[], viewDir?: number[],
- *   water?: Partial<typeof WATER> }} opts
+ *   channel?: { x: number, width: number }, water?: Partial<typeof WATER> }} opts
+ *   `channel` slots a gap through the beach skirt so the sea shows through it
+ *   as a stream. Cut the matching gap in the land above it.
  *   `viewRadius` is how much world the camera frames (the scene's FIT_RADIUS).
  *   Pass it and the detail auto-scales to the shot; omit it for plain world units.
  *   `sunDir`/`viewDir` are accepted but unused — the surface is unlit by design.
@@ -197,11 +212,36 @@ export function createIslandWater(opts = {}) {
 
   // Sandy beach skirt: a box a touch larger than the grass, its top just below
   // the grass so a sand rim shows around the edge and a cliff drops into the sea.
+  //
+  // `channel` cuts a gap straight through it, running the full depth in Z. The
+  // skirt is what fills every inch under the island, so cutting it is what lets
+  // the sea BELOW show through as a stream — the same surface, the same shader,
+  // the same swell, just seen through a slot. Whatever cuts the same gap in the
+  // grass above (see IslandScene's slabs) has to agree on x and width.
   const sand = new THREE.MeshStandardMaterial({ color: 0xefc85a, roughness: 1 });
-  const beach = new THREE.Mesh(new THREE.BoxGeometry(beachSize, beachHeight, beachSize), sand);
-  beach.position.y = -0.02 - beachHeight / 2;
-  beach.receiveShadow = true;
-  group.add(beach);
+  const skirt = (fromX, toX) => {
+    const width = toX - fromX;
+    if (width <= 0) return;
+    const beach = new THREE.Mesh(new THREE.BoxGeometry(width, beachHeight, beachSize), sand);
+    beach.position.set(fromX + width / 2, -0.02 - beachHeight / 2, 0);
+    beach.receiveShadow = true;
+    group.add(beach);
+  };
+
+  const channel = opts.channel;
+  if (channel) {
+    // The sand is pulled back a little FURTHER than the land it sits under.
+    // Cutting both at the same x leaves the skirt's side wall exactly coplanar
+    // with the grass slab's, and two coplanar faces z-fight — it reads as a
+    // stitched green-and-sand dashed line down the bank. Set back, the sand
+    // wall hides behind the grass wall, and everything below the waterline is
+    // covered by the sea anyway.
+    const relief = 0.15;
+    skirt(-beachSize / 2, channel.x - channel.width / 2 - relief);
+    skirt(channel.x + channel.width / 2 + relief, beachSize / 2);
+  } else {
+    skirt(-beachSize / 2, beachSize / 2);
+  }
 
   // Water plane surrounding the island.
   const geo = new THREE.PlaneGeometry(waterSize, waterSize, 128, 128);
