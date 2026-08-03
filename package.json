@@ -4,7 +4,10 @@
   "description": "A starter template for creating playable ads using Phaser and @smoud/playable-sdk with TypeScript support",
   "scripts": {
     "dev": "playable-scripts dev",
-    "build": "playable-scripts build"
+    "build": "playable-scripts build",
+    "lint": "prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit --ignoreDeprecations 5.0"
   },
   "keywords": [
     "playable",
@@ -25,7 +28,8 @@
   "devDependencies": {
     "@smoud/playable-scripts": "^1.1.4",
     "@types/three": "^0.185.1",
-    "prettier": "^2.7.1"
+    "prettier": "^2.7.1",
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=16.0.0"

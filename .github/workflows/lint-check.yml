@@ -1,0 +1,36 @@
+name: Lint check
+
+# Formatting and types only — no build. The build is what `npm run build` and
+# build-all.sh are for, and a lint gate that also builds takes minutes to tell
+# you about a stray quote.
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # package.json asks for >= 16
+          cache: npm
+
+      - run: npm ci
+
+      # Both checks run through package.json rather than being spelt out here,
+      # so `npm run lint` on a laptop and the gate on a PR can never disagree.
+      - name: Prettier
+        run: npm run lint
+
+      # Types are the check that actually catches bugs, so it runs even when the
+      # formatting step has already gone red — one push, both answers.
+      #
+      # The script passes --ignoreDeprecations 5.0 because tsconfig.json asks for
+      # "6.0", which only the TS 6 beta accepts. Overriding it on the CLI keeps
+      # the checked-in tsconfig working for whichever compiler an editor bundles.
+      - name: TypeScript
+        if: ${{ !cancelled() }}
+        run: npm run typecheck
