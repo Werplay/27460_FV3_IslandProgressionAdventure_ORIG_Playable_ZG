@@ -25,7 +25,7 @@ export const DEBUG_CONFIG = {
 
   debugStart: true,
   scene: 'island' as DebugScene,
-  stage: 'rubble' as IslandStage
+  stage: 'expansion' as IslandStage
 };
 
 

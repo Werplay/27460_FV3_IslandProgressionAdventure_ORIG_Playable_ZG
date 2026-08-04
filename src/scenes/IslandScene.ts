@@ -853,7 +853,7 @@ const EXPANSION = {
   // half-width of 4.22 — and this scene's `fit` IS the portrait half-width. Its farm is
   // deliberately WIDER than that frame, which is why the reference looks dense and full
   // rather than showing a whole island at once.
-  centre: { x: 0.78, z: 0.00 },
+  centre: { x: 1.34, z: -1.34 },
   // Opened out as far as the island allows. The reference's own frame is half-width 4.22 by
   // half-height 7.5 (what its camera config works out to), and this is that shot zoomed out
   // to 6.0 — the point at which the frame's corners reach the shoreline. At 6.2 the top-right
@@ -861,7 +861,7 @@ const EXPANSION = {
   // the village down and left bought: room to pull back this far and still fill the frame with
   // land. Given as a BOX so it holds on any aspect — the width binds on a 9:16 phone, the
   // height on anything narrower.
-  frame: { w: 8.87, h: 15.78 },
+  frame: { w: 8.12, h: 14.44 },
   ease: 2.4, // slow: this is the reveal, not a cut
   // --- the village ---
   //
@@ -911,6 +911,16 @@ const EXPANSION = {
     { src: roadSrc, at: { x: 14.5, z: -14 }, yawDeg: 180, length: 13, width: 1.15 },
     { src: roadSrc, at: { x: 14.5, z: -3 }, yawDeg: 180, length: 13, width: 1.15 },
     { src: roadCornerSrc, at: { x: 14.22, z: -21.2 }, yawDeg: 90, length: 1.8, width: null },
+    // The extension's main street, running at yaw 45 — the screen-vertical — in two
+    // lengths so it does not pave the core, plus the cross streets at 135.
+  { src: roadSrc, at: { x: -12.45, z: -46 }, yawDeg: 90, length: 29.5, width: 1.15 },
+  { src: roadSrc, at: { x: -17.2, z: -49.75 }, yawDeg: 180, length: 27.5, width: 1.15 },
+  { src: roadSrc, at: { x: -4.95, z: -31 }, yawDeg: 90, length: 14.5, width: 1.15 },
+  { src: roadSrc, at: { x: -2.2, z: -38.5 }, yawDeg: 180, length: 24, width: 1.15 },
+  { src: roadSrc, at: { x: 32.55, z: -1 }, yawDeg: 90, length: 29.5, width: 1.15 },
+  { src: roadSrc, at: { x: 27.8, z: -4.25 }, yawDeg: 180, length: 26.5, width: 1.15 },
+  { src: roadSrc, at: { x: 46.55, z: 14 }, yawDeg: 90, length: 27.5, width: 1.15 },
+  { src: roadSrc, at: { x: 42.8, z: 9.25 }, yawDeg: 180, length: 29.5, width: 1.15 },
   ],
   roadWidth: 1.15,
   lift: 0.01, // the roads are decals on the grass and need the same hair of clearance
@@ -945,6 +955,74 @@ const EXPANSION = {
     { key: 'rocksByWell', src: rocksSrc, at: { x: 12.4, z: -13.9 }, size: 0.9, yawDeg: 55 },
     { key: 'rocksByWell2', src: rocksSrc, at: { x: 12.9, z: -14.6 }, size: 1.5, yawDeg: -30 },
     { key: 'rocksBySawmill', src: rocksSrc, at: { x: 25.2, z: -20.8 }, size: 3.5, yawDeg: 110 },
+    // --- the extension ---
+    //
+    // The core above is the reference's farm, and it is a 1.75:1 LANDSCAPE cluster: in a
+    // portrait frame wide enough to hold it, it filled 27% of the height and the rest of the
+    // reveal was empty grass. So the village keeps growing past it — but laid out the way the
+    // core is, on the WORLD axes, which at yaw 45 read as diagonals on screen. (A first pass
+    // ran one street along world (1,1), the screen vertical: it filled the frame and looked
+    // nothing like the town it grew out of.)
+    //
+    // What climbs the screen is the grid itself: blocks stepping along the world diagonal,
+    // each bounded by an x-road and a z-road, generated wide and then CLIPPED to a band as
+    // narrow as the core. The clip is what matters — the frame's width is set by the core, so
+    // anything wider would force the shot open and put ocean in its corners.
+    //
+    // Laid out by scratchpad/village-extend.mjs (re-run it through apply-extension.py, which
+    // strips the old one first — the generator reads this file to find where the core ends).
+    // Positions are in this list's own config space: 0.55 world units each, scaled and moved
+    // onto the island by villageAt. Every model is one the scene already imports, so these
+    // props cost nothing in bundle.
+    //
+    // `size` is the measure the rest of this list uses — the model's largest dimension — and
+    // these run smaller than the core's, because the core is a farmYARD where a 3.5 is a barn
+    // standing alone, and a whole town at those sizes outweighed the farm it grows from.
+    // Which model lands on which lot is picked by hash, never repeating the last two and
+    // never past a cap: walking the list in order stamped the same run of models over and
+    // over, which reads as a pattern rather than as a town.
+  { key: 'street0', src: stationSrc, at: { x: -17.56, z: -56.63 }, size: 2.74, yawDeg: 270 },
+  { key: 'street1', src: feedMakerSrc, at: { x: -12.11, z: -56.8 }, size: 1.68, yawDeg: 90 },
+  { key: 'kerb0', src: lampSrc, at: { x: -10.5, z: -58.6 }, size: 1.4, yawDeg: 90 },
+  { key: 'street2', src: bakerySrc, at: { x: -17.65, z: -52.2 }, size: 2.06, yawDeg: 270 },
+  { key: 'street3', src: stationSrc, at: { x: -11.74, z: -51.6 }, size: 2.58, yawDeg: 90 },
+  { key: 'street4', src: homeSrc, at: { x: -17.41, z: -46.8 }, size: 2.56, yawDeg: 270 },
+  { key: 'street5', src: bakerySrc, at: { x: -12.17, z: -46.4 }, size: 2.25, yawDeg: 90 },
+  { key: 'kerb1', src: mailboxSrc, at: { x: -10.5, z: -47.6 }, size: 1, yawDeg: 90 },
+  { key: 'street6', src: siloSrc, at: { x: -17.63, z: -40.64 }, size: 2.27, yawDeg: 270 },
+  { key: 'street7', src: townBarnSrc, at: { x: -12.01, z: -40.15 }, size: 3.4, yawDeg: 90 },
+  { key: 'street8', src: tentSrc, at: { x: -7.35, z: -46.41 }, size: 1.94, yawDeg: 270 },
+  { key: 'street9', src: jamStationSrc, at: { x: -1.04, z: -46.36 }, size: 1.63, yawDeg: 90 },
+  { key: 'kerb2', src: crateSrc, at: { x: 0.5, z: -47.6 }, size: 1, yawDeg: 90 },
+  { key: 'street10', src: coopSrc, at: { x: -6.76, z: -39.85 }, size: 2.56, yawDeg: 270 },
+  { key: 'street11', src: townBarnSrc, at: { x: -0.01, z: -40.28 }, size: 3.36, yawDeg: 90 },
+  { key: 'street12', src: feedMakerSrc, at: { x: -6.4, z: -34.86 }, size: 2.06, yawDeg: 270 },
+  { key: 'street13', src: farmhouseSrc, at: { x: -0.44, z: -36.03 }, size: 2.46, yawDeg: 90 },
+  { key: 'street14', src: homeSrc, at: { x: -6.35, z: -29.19 }, size: 2.59, yawDeg: 270 },
+  { key: 'street15', src: windmillSrc, at: { x: -0.99, z: -29.64 }, size: 3.36, yawDeg: 90 },
+  { key: 'street16', src: feedMakerSrc, at: { x: 26.02, z: -13.82 }, size: 1.9, yawDeg: 180 },
+  { key: 'street17', src: siloSrc, at: { x: 32.48, z: -12.72 }, size: 1.96, yawDeg: 180 },
+  { key: 'street18', src: windmillSrc, at: { x: 25.91, z: -6.88 }, size: 2.81, yawDeg: 0 },
+  { key: 'street19', src: tentSrc, at: { x: 32.58, z: -7.95 }, size: 1.91, yawDeg: 0 },
+  { key: 'street20', src: homeSrc, at: { x: 25.94, z: -2.09 }, size: 2.01, yawDeg: 180 },
+  { key: 'street21', src: windmillSrc, at: { x: 32.33, z: -2.64 }, size: 2.93, yawDeg: 180 },
+  { key: 'street22', src: townBarnSrc, at: { x: 26.89, z: 3.08 }, size: 3.2, yawDeg: 0 },
+  { key: 'street23', src: homeSrc, at: { x: 31.64, z: 3.72 }, size: 2.25, yawDeg: 0 },
+  { key: 'street24', src: bakerySrc, at: { x: 37.39, z: -1.75 }, size: 1.86, yawDeg: 180 },
+  { key: 'street25', src: coopSrc, at: { x: 43.67, z: -1.98 }, size: 2.75, yawDeg: 180 },
+  { key: 'street26', src: homeSrc, at: { x: 37.35, z: 3.88 }, size: 2.39, yawDeg: 0 },
+  { key: 'street27', src: siloSrc, at: { x: 43.75, z: 3.21 }, size: 2.16, yawDeg: 0 },
+  { key: 'street28', src: farmhouseSrc, at: { x: 37.43, z: 8.84 }, size: 2.5, yawDeg: 180 },
+  { key: 'street29', src: homeSrc, at: { x: 42.42, z: 8.33 }, size: 2.03, yawDeg: 180 },
+  { key: 'kerb3', src: windChimeSrc, at: { x: 44.5, z: 7.4 }, size: 2, yawDeg: 90 },
+  { key: 'street30', src: siloSrc, at: { x: 37.17, z: 14.81 }, size: 2.16, yawDeg: 0 },
+  { key: 'street31', src: windmillSrc, at: { x: 43.99, z: 13.98 }, size: 2.94, yawDeg: 0 },
+  { key: 'street32', src: coopSrc, at: { x: 48.01, z: 9.25 }, size: 2.62, yawDeg: 180 },
+  { key: 'street33', src: tentSrc, at: { x: 54.27, z: 7.82 }, size: 2.16, yawDeg: 180 },
+  { key: 'street34', src: jamStationSrc, at: { x: 48.85, z: 14.98 }, size: 1.93, yawDeg: 0 },
+  { key: 'street35', src: siloSrc, at: { x: 53.5, z: 14.27 }, size: 2.28, yawDeg: 0 },
+  { key: 'parked0', src: vanSrc, at: { x: -7.82, z: -51.6 }, size: 2, yawDeg: 180 },
+  { key: 'parked1', src: vanSrc, at: { x: 36.17, z: -7.6 }, size: 2, yawDeg: 180 },
   ],
   // The pens, and what makes the whole thing read as a farm: runs of white fence around
   // the cow shed, the coop and the crop. Each run is a row of panels from its middle,
@@ -983,7 +1061,7 @@ const EXPANSION = {
   // the first one inside the windmill at (7, -19).
   trucks: [
     { src: truckSrc, at: { x: 5, z: -21.5 }, height: 1.6, yawDeg: 90 },
-    { src: truckElectricSrc, at: { x: 14.5, z: -7 }, height: 1.5, yawDeg: 0 }
+    { src: truckElectricSrc, at: { x: 14.5, z: -7 }, height: 1.5, yawDeg: 0 },
   ],
   idle: { rise: 0.012, rate: 9.5, rock: 0.5 }, // world units, rad/s, degrees
   // One arrow per KIND of opportunity, each ON the prop it points at. These carried the same
@@ -1017,11 +1095,14 @@ const EXPANSION = {
     // need, so the treeline costs nothing.
     trees: { count: 32, inner: 11.5, outer: 14, min: 2.4, max: 3.4, spacing: 2.6, salt: 300 },
     bushes: { count: 34, inner: 7, outer: 9.5, min: 0.9, max: 1.5, spacing: 1.6, salt: 202 },
-    // ...and the detail on the open ground inside it
-    flowers: { count: 100, inner: 0, outer: 13, min: 0.5, max: 0.9, spacing: 0.5, salt: 42 },
-    grass: { count: 70, inner: 0, outer: 13, min: 0.4, max: 0.8, spacing: 0.6, salt: 77 },
-    flowerGrass: { count: 40, inner: 5, outer: 13.5, min: 0.4, max: 0.7, spacing: 0.7, salt: 412 },
-    rocks: { count: 25, inner: 6.5, outer: 14, min: 0.4, max: 1.0, spacing: 0.9, salt: 311 }
+    // ...and the detail on the open ground. These reach PAST the treeline, out to where the
+    // extension's street ends (22 world units, i.e. 40 config), because the street was
+    // running out into bare grass. Small stuff only — the treeline itself stays around the
+    // core, where it screens the farm instead of hiding it.
+    flowers: { count: 150, inner: 0, outer: 40, min: 0.5, max: 0.9, spacing: 0.5, salt: 42 },
+    grass: { count: 110, inner: 0, outer: 40, min: 0.4, max: 0.8, spacing: 0.6, salt: 77 },
+    flowerGrass: { count: 60, inner: 5, outer: 40, min: 0.4, max: 0.7, spacing: 0.7, salt: 412 },
+    rocks: { count: 34, inner: 6.5, outer: 36, min: 0.4, max: 1.0, spacing: 0.9, salt: 311 }
   }
 };
 
