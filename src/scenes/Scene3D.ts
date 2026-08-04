@@ -92,6 +92,7 @@ const WATER_FRAG = /* glsl */ `
     for (int i = 0; i < 4; i++) { v += a * noise(p); p *= 2.0; a *= 0.5; }
     return v;
   }
+    
 
   void main() {
     vec2 uv = vWorldPos.xz;

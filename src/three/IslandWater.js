@@ -50,6 +50,9 @@ const WATER_FRAG = /* glsl */ `
   uniform float uRimSoftness;
   uniform float uHazeWidth;
   uniform float uHazeStrength;
+  uniform vec3 uShallowColor;
+  uniform float uShallowWidth; // how far out the sand stays visible through the water
+  uniform float uShallowStrength;
   uniform float uShoreWobble;
   uniform float uShoreDrift;
   varying vec2 vLocal;
@@ -127,6 +130,18 @@ const WATER_FRAG = /* glsl */ `
     float haze = 1.0 - smoothstep(0.0, max(uHazeWidth, 0.0001), shore);
     color = mix(color, uFoamColor, haze * uHazeStrength * atShore);
 
+    //    Shallows: the beach does not stop at the waterline, it keeps shelving under the
+    //    sea (see the sloped skirt below), so the sand keeps showing through the water and
+    //    only gives way to open blue once the bottom has dropped away. Painted rather than
+    //    made transparent on purpose — alpha here would also see through the slot cut for
+    //    the stream, where there is no seabed at all, and show the sky under the water.
+    //    This reaches the sand's own colour AT the waterline, which is what stops the
+    //    beach ending on a hard line — and it goes on OVER the haze above, because the
+    //    haze's white bloom otherwise washes the sand straight back out of it.
+    float shallow = 1.0 - smoothstep(0.0, max(uShallowWidth, 0.0001), shore);
+    color = mix(color, uShallowColor, shallow * uShallowStrength * atShore);
+
+
     //    ...and a brighter, tighter band hugging the sand itself.
     float rimSoft = max(uRimSoftness, 0.0001);
     float rim = 1.0 - smoothstep(uRimWidth - rimSoft, uRimWidth + rimSoft, shore);
@@ -165,11 +180,23 @@ const WATER = {
   patchOpacity: 1.0, // 1 = flat solid patches, lower = tinted
   patchDrift: 0.03, // slow drift so the sea is not frozen. 0 = perfectly still
 
+  // --- shallows: the sand still showing through, inside the waterline ---
+  // Its width is NOT set here — it is the width of the submerged part of the beach's
+  // slope, so the paint and the geometry always agree (see BEACH).
+  // PALE CYAN, not sand. Tinting the shallows towards the sand's own colour is what the
+  // depth says is happening, but 90% of 0xd9c477 over 0x5fc9f2 mixes to olive and the
+  // shoreline read as a band of algae. Shallow water over pale sand reads as lightened
+  // water, so this lightens towards white-cyan instead: it matches the sand in VALUE, which
+  // is what keeps the waterline from being a hard line, without matching it in hue.
+  shallowColor: 0x9fe0f7,
+  shallowStrength: 0.85,
+
   // --- shoreline, measured outward from the sand's edge ---
   rimWidth: 1.0, // width of the bright band against the sand
   rimSoftness: 0.5, // its feather. small = a crisp painted line
   hazeWidth: 3.0, // how far the soft pale bloom reaches out to sea
-  hazeStrength: 0.5, // how white that bloom gets at the shore
+  hazeStrength: 0.3, // how white that bloom gets at the shore. The shallows are painted on
+  // top of this now, so at 0.5 the two stacked into one washed-out grey band
   shoreWobble: 1.2, // noise that stops the shoreline tracing a square
   shoreDrift: 0.08, // how fast that wobble crawls, so the foam edge breathes
 
@@ -179,6 +206,31 @@ const WATER = {
   // pattern and the shoreline silhouette. Subtle by nature; 0 = dead flat.
   waveAmp: 0.15, // swell height
   waveScale: 2.4 // world size of one swell
+};
+
+/**
+ * The beach's PROFILE: how the sand gets from the grass down under the sea.
+ *
+ * It used to be a flat plateau ending in a vertical wall, which is what a box gives you —
+ * grass, a level yellow band, then a drop straight into blue, three flat bands with a hard
+ * line between each. Instead the skirt's top slopes: level under the island, then falling
+ * away over `width` to sit `drop` below the sand, crossing the waterline partway along.
+ * Everything past that crossing is the shallows the water shader paints the sand through.
+ *
+ * `drop`, `width` and `ease` set the shape; where the WATERLINE lands is then derived from
+ * them, and the slope is positioned so it comes out exactly where the old flat edge was.
+ * So the sea, the foam and anything moored against the shore (IslandScene's boat sits on
+ * SAND_EDGE) stay where they were — only the shape between them changes.
+ */
+const BEACH = {
+  width: 3.2, // how far the slope runs horizontally, world units
+  drop: 1.2, // how far below the dry sand its outer lip ends up
+  ease: 1.5, // >1 shelves gently at the top and steepens out to sea, as a beach does
+  // Vertex spacing across the slope. The skirt is one box per side of the stream and it
+  // spans the whole island, so this segments the whole span to get a curve at the rim.
+  // ponytail: ~30k verts of mostly-flat middle. Build the rim as its own ring if it
+  // ever costs anything — it is static geometry and has not.
+  step: 0.55
 };
 
 /**
@@ -218,12 +270,45 @@ export function createIslandWater(opts = {}) {
   // the sea BELOW show through as a stream — the same surface, the same shader,
   // the same swell, just seen through a slot. Whatever cuts the same gap in the
   // grass above (see IslandScene's slabs) has to agree on x and width.
+  // The slope, and the two distances that fall out of it: where the sea's surface cuts it
+  // (which is the shoreline, and is kept exactly where the old flat edge was), and how much
+  // of it ends up underwater (which is how wide the shallows are).
+  const shelf = { ...BEACH, ...(opts.beach ?? {}) };
+  const sandTop = -0.02;
+  const depthAt = (u) =>
+    shelf.drop * Math.pow(Math.min(Math.max(u, 0) / shelf.width, 1), shelf.ease);
+  const shoreEdge = beachSize / 2;
+  // Invert depthAt at the water's surface: how far along the slope it goes under.
+  const dryRun = shelf.width * Math.pow(Math.min((sandTop - waterY) / shelf.drop, 1), 1 / shelf.ease);
+  const slopeFrom = Math.max(shoreEdge - dryRun, islandHalf); // never slope under the grass
+  const outerEdge = slopeFrom + shelf.width;
+
   const sand = new THREE.MeshStandardMaterial({ color: 0xefc85a, roughness: 1 });
   const skirt = (fromX, toX) => {
     const width = toX - fromX;
     if (width <= 0) return;
-    const beach = new THREE.Mesh(new THREE.BoxGeometry(width, beachHeight, beachSize), sand);
-    beach.position.set(fromX + width / 2, -0.02 - beachHeight / 2, 0);
+    const geometry = new THREE.BoxGeometry(
+      width,
+      beachHeight,
+      outerEdge * 2,
+      Math.ceil(width / shelf.step),
+      1,
+      Math.ceil((outerEdge * 2) / shelf.step)
+    );
+    // Pull the top face down over the rim. The test catches the top row of the SIDE faces
+    // too, which is what keeps the walls welded to the sloping top instead of tearing.
+    const pos = geometry.attributes.position;
+    const top = beachHeight / 2;
+    const centreX = fromX + width / 2;
+    for (let i = 0; i < pos.count; i++) {
+      if (pos.getY(i) < top - 1e-4) continue;
+      const out = Math.max(Math.abs(pos.getX(i) + centreX), Math.abs(pos.getZ(i)));
+      if (out > slopeFrom) pos.setY(i, top - depthAt(out - slopeFrom));
+    }
+    geometry.computeVertexNormals(); // the slope has to catch the light as a slope
+
+    const beach = new THREE.Mesh(geometry, sand);
+    beach.position.set(centreX, sandTop - beachHeight / 2, 0);
     beach.receiveShadow = true;
     group.add(beach);
   };
@@ -237,10 +322,10 @@ export function createIslandWater(opts = {}) {
     // wall hides behind the grass wall, and everything below the waterline is
     // covered by the sea anyway.
     const relief = 0.15;
-    skirt(-beachSize / 2, channel.x - channel.width / 2 - relief);
-    skirt(channel.x + channel.width / 2 + relief, beachSize / 2);
+    skirt(-outerEdge, channel.x - channel.width / 2 - relief);
+    skirt(channel.x + channel.width / 2 + relief, outerEdge);
   } else {
-    skirt(-beachSize / 2, beachSize / 2);
+    skirt(-outerEdge, outerEdge);
   }
 
   // Water plane surrounding the island.
@@ -251,9 +336,14 @@ export function createIslandWater(opts = {}) {
       uWaterColor: { value: new THREE.Color(cfg.waterColor) },
       uPatchColor: { value: new THREE.Color(cfg.patchColor) },
       uFoamColor: { value: new THREE.Color(cfg.foamColor) },
-      // Foam is measured from the SAND's outer edge, not the grass, so a width
-      // of 0 sits exactly where the water meets the beach.
-      uShoreEdge: { value: beachSize / 2 },
+      // Foam is measured from the waterline — where the sea's surface cuts the beach's
+      // slope — so a width of 0 sits exactly where the water meets the sand.
+      uShoreEdge: { value: shoreEdge },
+      uShallowColor: { value: new THREE.Color(cfg.shallowColor) },
+      // Not art-directed and NOT scaled by k: the shallows are exactly the submerged part
+      // of the slope, so the colour stops where the seabed actually drops away.
+      uShallowWidth: { value: outerEdge - shoreEdge },
+      uShallowStrength: { value: cfg.shallowStrength },
       uPatchScaleBig: { value: cfg.patchScaleBig * k },
       uPatchScaleSmall: { value: cfg.patchScaleSmall * k },
       uPatchThresholdBig: { value: cfg.patchThresholdBig },

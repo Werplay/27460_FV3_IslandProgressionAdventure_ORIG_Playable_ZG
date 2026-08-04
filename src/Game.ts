@@ -2,7 +2,7 @@ import { sdk } from '@smoud/playable-sdk';
 import * as Phaser from 'phaser';
 import { OverlayScene } from './overlay/OverlayScene';
 import { IslandScene } from './scenes/IslandScene';
-import { resolveDebugStart, type DebugScene } from './config/debugConfig';
+import { resolveDebugStart, type DebugScene, type IslandStage } from './config/debugConfig';
 
 /** Everything the coordinator needs from whichever 3D layer is active. */
 interface PlayableScene {
@@ -29,8 +29,10 @@ export class Game {
 
     const debug = resolveDebugStart();
     if (debug.enabled) {
-      console.log(`[debugStart] booting "${debug.scene}" — intro skipped`);
-      void this.startDebugScene(debug.scene);
+      console.log(
+        `[debugStart] booting "${debug.scene}"${debug.scene === 'island' ? ` at stage "${debug.stage}"` : ''} — intro skipped`
+      );
+      void this.startDebugScene(debug.scene, debug.stage);
       return;
     }
 
@@ -68,7 +70,7 @@ export class Game {
    * the bundle in dev — `__DEV__` is false in release builds, so webpack drops
    * this whole branch (and everything it pulls in) from the shipped playable.
    */
-  private async startDebugScene(name: DebugScene): Promise<void> {
+  private async startDebugScene(name: DebugScene, stage: IslandStage): Promise<void> {
     let scene: PlayableScene;
 
     if (__DEV__ && name === 'farm') {
@@ -78,7 +80,7 @@ export class Game {
       const { Scene3D } = await import('./scenes/Scene3D');
       scene = new Scene3D(this.width, this.height);
     } else {
-      scene = new IslandScene(this.width, this.height);
+      scene = new IslandScene(this.width, this.height, stage);
     }
 
     // Lifecycle events can land while the dynamic import is in flight, so apply
