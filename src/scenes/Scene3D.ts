@@ -6,7 +6,7 @@
 // depth falloff. Framing uses the island's bounding sphere so it stays fitted on
 // any aspect ratio (tall portrait or landscape).
 import * as THREE from 'three';
-import groundTextureSrc from 'assets/images/Ground3.jpg';
+import groundTextureSrc from 'assets/images/Ground3.webp';
 
 // Camera.
 const CAM_FOV = 34;

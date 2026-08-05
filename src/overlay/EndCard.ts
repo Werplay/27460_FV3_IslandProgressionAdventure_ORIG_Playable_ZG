@@ -8,8 +8,8 @@
 // the time this runs the intro is finished with, so there is nothing to share.
 import * as Phaser from 'phaser';
 import { sdk } from '@smoud/playable-sdk';
-import bgSrc from 'assets/images/EndcardBg.jpg';
-import logoSrc from 'assets/images/Logo.png';
+import bgSrc from 'assets/images/EndcardBg.webp';
+import logoSrc from 'assets/images/Logo.webp';
 import heroSrc from 'assets/images/character_with_muffin_and_animals.png';
 import ctaSrc from 'assets/images/play_now_button.png';
 import googleSrc from 'assets/images/google-button.png';

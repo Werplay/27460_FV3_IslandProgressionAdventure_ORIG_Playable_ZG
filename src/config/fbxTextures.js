@@ -1,12 +1,12 @@
-import Ground3JPG from 'assets/images/Ground3.jpg';
-import BuildingsJPG from 'assets/images/Buildings.jpg';
-import RoadsRocksJPG from 'assets/images/RoadsRocks.jpg';
+import Ground3JPG from 'assets/images/Ground3.webp';
+import BuildingsJPG from 'assets/images/Buildings.webp';
+import RoadsRocksJPG from 'assets/images/RoadsRocks.webp';
 import CropsTexturePNG from 'assets/images/Crops_Texture.png';
 // import { ACowAngusJPG } from '../../media/images_A_Cow_Angus.jpg.js';
-import CMerryweatherClassicJPG from 'assets/images/C_Merryweather_Classic.jpg';
-import AChickenLeghornJPG from 'assets/images/A_Chicken_Leghorn.jpg';
+import CMerryweatherClassicJPG from 'assets/images/C_Merryweather_Classic.webp';
+import AChickenLeghornJPG from 'assets/images/A_Chicken_Leghorn.webp';
 import VegetationPNG from 'assets/images/Vegetation.png';
-import ACowShorthornJPG from 'assets/images/A_Cow_Shorthorn.jpg';
+import ACowShorthornJPG from 'assets/images/A_Cow_Shorthorn.webp';
 
 
 /**

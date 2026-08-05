@@ -26,6 +26,7 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@gltf-transform/cli": "^4.4.2",
     "@smoud/playable-scripts": "^1.1.4",
     "@types/three": "^0.185.1",
     "prettier": "^2.7.1",

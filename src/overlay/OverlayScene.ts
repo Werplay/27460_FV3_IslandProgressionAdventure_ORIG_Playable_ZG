@@ -50,15 +50,102 @@ const FOG = {
   cover: 1050, // ms until the screen is solid
   hold: 180, // ...held while the intro is swapped out behind it
   clear: 1100, // ...and to thin back out
+  /**
+   * How the fog LEAVES. It came in as banks travelling from the edges, and sending them back
+   * the way they came is what read as two slabs sliding off — the eye follows the hard outer
+   * edge across the screen, exactly as it does on the way in.
+   *
+   * So it does not travel out AT ALL. There was a `drift` here — a fraction of the return trip,
+   * meant to keep the mass moving — and it had to go: every bank drifting back towards its own
+   * edge is left-half-left, right-half-right, which is a curtain opening. Small enough not to be
+   * followed, still perfectly readable as a horizontal split. Symmetry about the middle is the
+   * thing the eye catches, not the distance travelled.
+   *
+   * What clears the screen is `grow` — every piece swells past the frame while it fades, so the
+   * density drops where it stands and the world comes through the middle of it rather than from
+   * behind a receding wall.
+   *
+   * `vary` jitters each piece's own duration so they do not all thin at one rate, which is the
+   * other half of a slab: uniform alpha over a whole bank reads as one object dimming.
+   *
+   * The rest is what makes it read as WEATHER rather than as a fade:
+   *
+   * `wind` — one direction every piece leans in, up-screen and slightly across, as fractions of
+   * the screen. Fog lifts; it does not evaporate on the spot. This is shared, unlike `drift`,
+   * which is per-side: a common direction is what says "air is moving" instead of "objects are
+   * animating".
+   *
+   * `linger`/`lingerDelay` — the mid-screen puffs outlast the banks by half again and start
+   * later. Real fog goes in that order: the mass thins first and the last of it hangs in torn
+   * wisps. It is also what stops the clear finishing all at once, which no fog does.
+   *
+   * `curl` — degrees the wisps turn as they go, so they deform rather than translate. Banks
+   * never rotate: they are screen-sized quads and a turned one shows its corner.
+   *
+   * `ripple` — density does not fall smoothly. A clearing bank thins, thickens where it folds
+   * over itself, then goes. This rides a small wave on top of the easeOut, phased per piece, so
+   * the thinning breathes. It moves the scale and the drift with it, which is the billow.
+   */
+  clearOut: {
+    grow: 1.55,
+    vary: 0.35,
+    wind: { x: 0.05, y: -0.11 },
+    linger: 1.5,
+    lingerDelay: 0.45,
+    curl: 26,
+    ripple: 0.12,
+    // How far into the clear the BANKS are gone. They hand over to the patches (FOG.tear) at
+    // this point rather than lasting the whole move: a screen-sized quad has no interior, so
+    // however it is eased, all it can ever do on its own is dim.
+    bankFade: 0.55
+  },
+  /**
+   * What actually breaks the fog APART.
+   *
+   * The banks cover the screen with two quads a layer. That is right for arriving — a quad can
+   * travel and thicken — but it is the whole reason the clear read as a fade: there is nothing
+   * in a quad to come apart. Fading it faster, rippling it, drifting it, none of that gives it
+   * an interior it does not have.
+   *
+   * So the clear lays a GRID of soft round patches over the banks and dissolves the banks under
+   * them. Each patch then goes on its own clock, drifts out from the middle of the screen, turns,
+   * swells and fades — so holes open where the thin ones went, clumps hang on where two overlap,
+   * and the mass tears into pieces instead of dimming as one. Holes opening early is the effect,
+   * not a leak: the intro is already swapped out behind it before any of this starts.
+   *
+   * `grid` is the spacing and `size` the diameter, both in screen widths — size MUST stay well
+   * above grid or the patches start separated and the fog opens all at once on the first frame.
+   * `scatter` is how far a patch wanders as it goes, in screen widths, in a direction of its
+   * own. It replaced an outward-from-centre push, which was a mistake for the same reason the
+   * banks' drift was: pushing every patch away from the middle is radially symmetric, and on a
+   * screen far taller than it is wide that resolves into left-going and right-going halves — the
+   * curtain again, now made of patches. Fog has no centre to flee. The break-up has to come from
+   * the timings, not from the directions.
+   *
+   * These two numbers were measured, not guessed. Compositing the puff gradient over the grid,
+   * 0.34/0.78 left a 24% hole in one corner of a 414x896 screen — a thin spot in the SAME place
+   * every run, which reads as a bug rather than as weather. 0.30/0.90 holds 97% everywhere from
+   * 320x568 to landscape. Tightening `grid` costs patches: it is 45 of them on a tall phone.
+   */
+  tear: {
+    grid: 0.3,
+    size: 0.9,
+    jitter: 0.5, // how far off its slot a patch sits, in spacings — kills the grid pattern
+    alpha: 0.92,
+    scatter: 0.09,
+    grow: 1.7,
+    curl: 70
+  },
   // How long the fog sits there before clearing when there is NO video (WITH_VIDEO false). It is
   // the only cover the scene's models get, so it is a load budget as much as a beat.
   soloHold: 1400,
   // How far into that thinning the world is actually LEGIBLE, and so the moment anything meant
   // to ride the reveal (the camera push-in and its whoosh) should start. Not zero: the banks
-  // hold for `hold`, their tweens are staggered by up to a quarter of `clear` on top, and the
-  // ease is Sine.easeIn — so for the first half-second after full coverage the screen is still
-  // solid fog and a move started there is half over before anyone can see it.
-  reveal: 520,
+  // hold for `hold` and their tweens are staggered by up to a quarter of `clear` on top.
+  // 360 rather than the old 520 because the clear now eases OUT — the density falls in the
+  // first third of the move instead of the last, so the world shows through that much sooner
+  // and a push-in on the old number started against fog that had already gone.
+  reveal: 360,
   // How long BEFORE the video ends the fog starts. The clip keeps playing behind it, so the
   // player never sees it stop: by the time the last frame goes by, the fog is most of the way in
   // and the swap happens inside it. Waiting for the end event instead put a visible beat of
@@ -334,7 +421,16 @@ export class OverlayScene extends Phaser.Scene {
     // Every layer gets its OWN tween rather than one tween over all of them with per-index
     // values. That indexed form is what hid a sign error last time: the banks slid off their own
     // edges of the screen and, because a finished video stops rendering, the cut still "worked".
-    const settle: Array<{ image: Phaser.GameObjects.Image; x: number }> = [];
+    /**
+     * `clock` is which set of random numbers a piece clears on, and it is NOT the piece's index.
+     *
+     * The two banks of a layer are one continuous mass across the screen — they overlap in the
+     * middle by design. Given a clock each, the left one finished measurably before the right,
+     * and what that looks like is the screen clearing in halves with a vertical boundary down
+     * it. So a layer shares one clock and goes as one thing. Only pieces that ARE separate
+     * things — the mid-screen puffs — get their own.
+     */
+    const settle: Array<{ image: Phaser.GameObjects.Image; clock: number; wisp: boolean }> = [];
     let last = 0;
 
     FOG.layers.forEach((layer, depth) => {
@@ -351,7 +447,7 @@ export class OverlayScene extends Phaser.Scene {
           // mirroring alone lined their torn edges up and left a seam down the middle.
           .setFlipY(side > 0);
         this.fog.push({ image, role: 'bank', side, depth, fx: 0, fy: 0, grown: 1 });
-        settle.push({ image, x: home });
+        settle.push({ image, clock: depth, wisp: false });
 
         // Where it ends up, whether it is tweened there or simply put there.
         const to = {
@@ -396,7 +492,8 @@ export class OverlayScene extends Phaser.Scene {
         fy: puff.y / height,
         grown: FOG.bloom.grow * (0.85 + at(i, 31) * 0.3)
       });
-      settle.push({ image: puff, x: puff.x });
+      // Past the banks' clocks (one per layer), so the two sets cannot collide.
+      settle.push({ image: puff, clock: FOG.layers.length + i, wisp: true });
 
       const grown = FOG.bloom.grow * (0.85 + at(i, 31) * 0.3);
       if (alreadyThere) {
@@ -424,31 +521,163 @@ export class OverlayScene extends Phaser.Scene {
       this.video?.destroy();
       this.video = undefined;
 
+      // `out` is when the MASS is gone and the game may start; `gone` is when the last wisp has
+      // faded and the objects can go. They are not the same moment any more — the wisps outlive
+      // the banks on purpose (FOG.clearOut.linger), and holding the first beat back for them
+      // would trade a second of play for scenery nobody is looking at.
       let out = 0;
+      let gone = 0;
+      const { grow, vary, wind, linger, lingerDelay, curl, ripple, bankFade } = FOG.clearOut;
       const hold = alreadyThere ? FOG.soloHold : FOG.hold;
-      settle.forEach(({ image, x }, i) => {
-        const delay = hold + at(i, 37) * FOG.clear * 0.25;
-        out = Math.max(out, delay + FOG.clear);
+
+      // Lay the patches over the banks FIRST, so the banks have something to hand the coverage
+      // to as they go. This is what tears the fog up; the tweens below only see it out.
+      //
+      // Counted into `out` as well as `gone`: the patches ARE the mass once the banks have
+      // handed over, so the first beat waits for them. Only the bloom wisps are allowed to
+      // outlive it.
+      const torn = this.tearApart(width, height, hold, at);
+      out = Math.max(out, torn);
+      gone = Math.max(gone, torn);
+
+      settle.forEach(({ image, clock, wisp }) => {
+        const delay = hold + at(clock, 37) * FOG.clear * (wisp ? lingerDelay : 0.25);
+        // The banks are on a shorter clock than everything else: they are the smooth mass, and
+        // once the patches are carrying the screen there is nothing to be gained by keeping them.
+        const duration =
+          FOG.clear * (wisp ? linger : bankFade) * (1 - vary / 2 + at(clock, 41) * vary);
+        gone = Math.max(gone, delay + duration);
+        if (!wisp) out = Math.max(out, delay + duration);
         this.tweens.add({
           targets: image,
-          x,
+          // The only travel left is the wind, and it is the SAME for every piece — one direction
+          // the whole mass leans in. Anything per-side goes back to being a curtain.
+          x: image.x + width * wind.x * (0.7 + at(clock, 43) * 0.6),
+          y: image.y + height * wind.y * (0.7 + at(clock, 45) * 0.6),
           alpha: 0,
-          scale: image.scale * 1.15, // thins as it spreads, rather than shrinking away
-          duration: FOG.clear,
+          // scaleX and scaleY, NOT `scale`. Phaser's `scale` getter is the AVERAGE of the two,
+          // so tweening it on a bank — whose quad is far taller than it is wide — snapped both
+          // to that average on the first frame: the bank lost about a sixth of its height in
+          // one frame and showed the game through the top and bottom of the screen before it
+          // had faded at all. That snap was most of what read as the fog "leaving" abruptly.
+          scaleX: image.scaleX * grow * (wisp ? 1.25 : 1),
+          scaleY: image.scaleY * grow * (wisp ? 1.25 : 1),
+          // Only the wisps turn — a rotated full-screen bank shows its own corner.
+          ...(wisp ? { angle: image.angle + (at(clock, 47) - 0.5) * 2 * curl } : {}),
+          duration,
           delay,
-          ease: 'Sine.easeIn'
+          // easeOut, not easeIn: the density has to fall AT ONCE and trail off, which is what
+          // dissipating looks like. easeIn held it solid for half the clear and then whipped it
+          // away — the reveal was the last third of the move, so the move itself was the event.
+          // The ripple on top keeps that fall from being a clean curve; see FOG.clearOut.
+          ease: (t: number) =>
+            Math.sin((t * Math.PI) / 2) +
+            ripple *
+              Math.sin(t * Math.PI * 3 + at(clock, 49) * Math.PI * 2) *
+              Math.sin(t * Math.PI)
         });
       });
 
       this.time.delayedCall(hold + FOG.reveal, () => this.hooks.onClearing());
 
       this.time.delayedCall(out, () => {
-        this.fog.forEach(({ image }) => image.destroy());
-        this.fog = [];
         this.fogPhase = 'none';
         this.hooks.onDone();
       });
+
+      // The wisps are still fading over the running game at this point, which is the whole
+      // point of them. Nothing here is interactive, so they cost the player nothing.
+      this.time.delayedCall(gone, () => {
+        this.fog.forEach(({ image }) => image.destroy());
+        this.fog = [];
+      });
     });
+  }
+
+  /**
+   * Lay a grid of soft patches over the covering banks and dissolve them one by one, so the fog
+   * COMES APART instead of dimming. See FOG.tear for why this exists at all.
+   *
+   * Each patch gets the shared wind, a small wander of its own (FOG.tear.scatter), and its own
+   * delay, rate, spin and swell. The delays are the important part: a patch that has finished
+   * while its neighbours are half-way is a hole, and holes appearing all over at different
+   * moments is what breaking apart looks like. The motion is only there so the pieces are not
+   * static while they do it.
+   *
+   * Returns when the last patch has faded, which is when the mass is really gone.
+   */
+  private tearApart(
+    width: number,
+    height: number,
+    hold: number,
+    at: (i: number, salt: number) => number
+  ): number {
+    const { grid, size, jitter, alpha, scatter, grow, curl } = FOG.tear;
+    const { wind, ripple } = FOG.clearOut;
+    const step = width * grid;
+    const cols = Math.ceil(1 / grid) + 1;
+    const rows = Math.ceil(height / step) + 1;
+    let end = 0;
+    let i = 0;
+
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows; r++) {
+        i++;
+        const x = width / 2 + (c - (cols - 1) / 2) * step + (at(i, 51) - 0.5) * step * jitter;
+        const y = height / 2 + (r - (rows - 1) / 2) * step + (at(i, 53) - 0.5) * step * jitter;
+        const span = width * size * (0.8 + at(i, 55) * 0.5);
+        const patch = this.add
+          .image(x, y, 'fogPuff')
+          .setDisplaySize(span, span)
+          .setAlpha(alpha)
+          .setDepth(1.02) // over the banks, under nothing
+          .setAngle(at(i, 57) * 360);
+        // Registered like everything else so it is destroyed with the rest and cannot outlive
+        // the transition. refitFog leaves it alone: that only runs while COVERING.
+        this.fog.push({
+          image: patch,
+          role: 'puff',
+          side: 0,
+          depth: 0,
+          fx: x / width,
+          fy: y / height,
+          grown: patch.scale
+        });
+
+        // A direction of its OWN — not one derived from where it sits, which is how the last
+        // version rebuilt the curtain out of patches. Two neighbours can wander opposite ways;
+        // across the screen it averages to nothing, which is the point.
+        //
+        // The golden angle rather than the hash used everywhere else here. That hash is one sine
+        // and it is not independent enough of the loop index to be trusted with a DIRECTION: the
+        // patches are laid out column by column, so its output lined up with the column often
+        // enough to put a 0.36 correlation between which side of the screen a patch starts on and
+        // which way it travels — a faint curtain, baked in identically for every player, because
+        // none of this is actually random. Turning by the golden angle each time cannot line up
+        // with any grid: 0.09 across every screen size.
+        const angle = i * 2.399963;
+        const push = width * scatter * (0.5 + at(i, 63));
+
+        const delay = hold + at(i, 65) * FOG.clear * 0.4;
+        const duration = FOG.clear * (0.55 + at(i, 67) * 0.4);
+        end = Math.max(end, delay + duration);
+
+        this.tweens.add({
+          targets: patch,
+          x: x + Math.cos(angle) * push + width * wind.x,
+          y: y + Math.sin(angle) * push + height * wind.y,
+          alpha: 0,
+          scale: patch.scale * grow, // square, so the average-scale trap does not apply here
+          angle: patch.angle + (at(i, 69) - 0.5) * 2 * curl,
+          duration,
+          delay,
+          ease: (t: number) =>
+            Math.sin((t * Math.PI) / 2) +
+            ripple * Math.sin(t * Math.PI * 3 + at(i, 71) * Math.PI * 2) * Math.sin(t * Math.PI)
+        });
+      }
+    }
+    return end;
   }
 
   /**

@@ -6,9 +6,10 @@ import * as THREE from 'three';
 import { sdk } from '@smoud/playable-sdk';
 import { sfx } from '../audio/Sfx';
 import type { IslandStage } from '../config/debugConfig';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader as GLTFLoaderBase } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { createIslandWater } from '../three/IslandWater.js';
-import grassTextureSrc from 'assets/images/Ground3.jpg';
+import grassTextureSrc from 'assets/images/Ground3.webp';
 // Every model here is GLB. Webpack inlines that straight into the one build
 // file, and it costs about half what a base64 .fbx did — the FBX exports are
 // still in assets/models as the source art, converted with:
@@ -20,9 +21,9 @@ import grassTextureSrc from 'assets/images/Ground3.jpg';
 // predates this and came out of a V-flipping pipeline, like the farm's models —
 // wants flipY = false. Each one says which it is where its texture is bound.
 import boatSrc from 'assets/models/B_Boat.glb';
-import boatTextureSrc from 'assets/images/Buildings.jpg';
+import boatTextureSrc from 'assets/images/Buildings.webp';
 import merrySrc from 'assets/models/Merry-Anim.glb';
-import merryTextureSrc from 'assets/images/C_Merryweather_Classic.jpg';
+import merryTextureSrc from 'assets/images/C_Merryweather_Classic.webp';
 import hipsterSrc from 'assets/models/Hipster-Anim.glb';
 import hipsterTextureSrc from 'assets/images/C_Hipster_Classic.jpg';
 import rubbleSrc from 'assets/models/Rubble_Rock_gray.glb';
@@ -43,7 +44,7 @@ import treeSrc from 'assets/models/Tree_Round.glb';
 // which is what lets her come along instead of being left behind. Costs 130 KB
 // more in the bundle (383 KB against 253).
 import cowSrc from 'assets/models/Cow-Anim2.glb';
-import cowTextureSrc from 'assets/images/A_Cow_Shorthorn.jpg';
+import cowTextureSrc from 'assets/images/A_Cow_Shorthorn.webp';
 // Farm plot, same convention as the tree and the cow: flipY FALSE. It carries
 // BOTH halves of the farming beat in one file — a flat tilled bed on the
 // buildings atlas, with the finished wheat as a child node on the crop atlas —
@@ -52,9 +53,9 @@ import cowTextureSrc from 'assets/images/A_Cow_Shorthorn.jpg';
 // be deleted.)
 import plotSrc from 'assets/models/PlotWheat.glb';
 import cropTextureSrc from 'assets/images/Crops_Texture.png';
-import wheatSrc from 'assets/images/Wheat.png';
-import appleSrc from 'assets/images/Apple.png';
-import carrotSrc from 'assets/images/Carrot.png';
+import wheatSrc from 'assets/images/Wheat.webp';
+import appleSrc from 'assets/images/Apple.webp';
+import carrotSrc from 'assets/images/Carrot.webp';
 // Scenery. Every one of these is ALREADY imported by src/config/fbxModels.js for
 // the farm scene, so bundling them here is free — webpack hands the same module
 // to both, and the playable's one file carries each GLB once. Which atlas each
@@ -98,7 +99,7 @@ import coopSrc from 'assets/models/B_Chicken_Coop.glb';
 // flipY FALSE for every one of them. The road is the only thing in the scene that
 // reads off the roads atlas.
 import roadSrc from 'assets/models/Road.glb';
-import roadTextureSrc from 'assets/images/RoadsRocks.jpg';
+import roadTextureSrc from 'assets/images/RoadsRocks.webp';
 import bakerySrc from 'assets/models/Bakery.glb';
 import dairySrc from 'assets/models/B_Dairy_Factory.glb';
 import townBarnSrc from 'assets/models/B_Victorian_Barn_Lvl3.glb';
@@ -126,13 +127,26 @@ import siloSrc from 'assets/models/Silo.glb';
 import cowShedSrc from 'assets/models/Cow_Shed.glb';
 import lampSrc from 'assets/models/Lamp.glb';
 import arrowSrc from 'assets/images/arrow.png';
-import pointerSrc from 'assets/images/PointerHand.png';
-import hammerSrc from 'assets/images/props/Hammer.png';
-import axeSrc from 'assets/images/props/Axe.png';
-import broomSrc from 'assets/images/props/broom.png';
-import woodSrc from 'assets/images/Wood.png';
-import logoSrc from 'assets/images/Logo.png';
+import pointerSrc from 'assets/images/PointerHand.webp';
+import hammerSrc from 'assets/images/props/Hammer.webp';
+import axeSrc from 'assets/images/props/Axe.webp';
+import broomSrc from 'assets/images/props/broom.webp';
+import woodSrc from 'assets/images/Wood.webp';
+import logoSrc from 'assets/images/Logo.webp';
 import fontSrc from 'assets/fonts/MasalaPro-Bold.otf';
+
+/**
+ * Every GLB above is quantized and entropy-coded with EXT_meshopt_compression, which
+ * the spec marks REQUIRED — a loader without the decoder rejects the file outright
+ * rather than degrading. Subclassing rather than calling setMeshoptDecoder at each of
+ * the fourteen `new GLTFLoader()` sites means a fifteenth cannot forget it.
+ */
+class GLTFLoader extends GLTFLoaderBase {
+  constructor(manager?: THREE.LoadingManager) {
+    super(manager);
+    this.setMeshoptDecoder(MeshoptDecoder);
+  }
+}
 
 // Grass land width/depth. Big enough from the start to hold the whole playable: the beats
 // run down the western half and the village sits in the east. It used to be 25 and was
@@ -158,6 +172,12 @@ const FRAME_HEIGHT_RATIO = 0.62;
 // Left where it was when they stood 1.5 apart rather than pulled in with them: it is a
 // floor, and a shot that never reaches it costs nothing.
 const FRAME_MIN_WIDTH = 2.1;
+
+// Portrait-only zoom knob, applied to EVERY beat's frustum (see updateCamera) rather than to
+// one shot's numbers. 1 = hold exactly what the beat asked for; below 1 pulls in, above 1 backs
+// off. Landscape is left alone — it is the orientation that already crops.
+// Go much below ~0.85 and the margins the content-measured beats add start getting eaten.
+const PORTRAIT_ZOOM = 0.92;
 
 /**
  * The OPENING shot: the rubble beat, the run and the rocks breaking all sit on this one frame,
@@ -201,8 +221,8 @@ const INTRO_ZOOM = { from: 1.55, ease: 1.2 };
 // Lighting, taken from the reference playable (its ThreeSceneManager.addLights).
 const LIGHTS = {
   ambient: 1.2,
-  sun: 1.5, // the one that casts
-  fill: 1.0, // a second directional, straight down
+  sun: 2.7, // the one that casts
+  fill: 1, // a second directional, straight down
   shadowMap: 2048,
   shadowReach: 26 // half-width of the sun's shadow box, in world units
 };
@@ -620,7 +640,12 @@ const ARRIVAL = {
 // lanes without their paths ever crossing.
 const CROSSING = {
   lane: 0.4, // either side of the deck's centre line
-  beyond: 1.3, // how far onto the far bank they carry on before pulling up
+  // How far onto the far bank they carry on. Nothing pulls up here — the forward leg is
+  // CHAINED to this one — so this is simply the first part of the distance from the deck to
+  // the cow, and it counts against the run exactly as FORWARD.distance does. 1.0 rather than
+  // 1.3: it still puts them a clear stride past the planks (the deck's step-down blend is
+  // CROSSING.edge, 0.35) and it is 0.3 of the 0.7 that came off the run.
+  beyond: 1.0,
   delay: 0.4, // seconds after the smoke clears before they set off
   // The planks sit a little above the grass — measured off the model, not
   // guessed — so they step up onto the deck and back down at the far end
@@ -639,11 +664,20 @@ const CROSSING = {
 const FORWARD = {
   // World units off the end of the bridge — and THE knob for how far the whole cow beat sits
   // from the crossing, since COW_STOP is measured from it and the cow, her trees and the shot
-  // all hang off COW_STOP. Was 2; 1.2 pulls the beat in so the bridge is still part of the
-  // picture when they free her. The far bank cannot take much less: they are already
-  // CROSSING.beyond (1.3) past the deck when this leg starts, and it is what turns the
-  // crossing into a walk up the bank rather than a stop at the end of the planks.
-  distance: 1.2,
+  // all hang off COW_STOP. Was 2, then 1.2; 0.8 pulls the beat in again so there is less run
+  // between the crossing and the cow — with CROSSING.beyond down to 1.0 alongside it, they
+  // cover 1.8 units past the deck rather than 2.5, about 0.6s less running at the slower of
+  // the two characters' speeds (1.23 u/s).
+  //
+  // 1.8 is the FLOOR, and the thing that sets it is not this bank at all — it is the STREAM,
+  // via the barn. The barn sits back TOWARDS the bridge from the farmland (BARN.down/right are
+  // both negative), so pulling the cow beat in pushes the barn AT the water, and it has only
+  // 0.28 of clearance to give. Below 1.8 the farmland has to move out to hold the barn off the
+  // channel, and the walk it costs is more than the run it saves — 4.61 units of walking
+  // against today's 3.97. See scratchpad/tighten.mjs, which solves the field and the barn
+  // together against the water; FARM.down/right and BARN.right below are its answer for this
+  // number, so the three move as a set.
+  distance: 0.8,
   headingDeg: 90 // straight along +X, which is where the far bank opens up
 };
 
@@ -805,14 +839,19 @@ const FARM = {
   // Moved out from 4.25 / -2 to clear the STREAM. The barn hangs off this field (BARN.down
   // and .right are measured from it), the field hangs off COW_STOP, and COW_STOP came 0.8
   // closer to the water when FORWARD.distance was cut — which walked the barn's screen-left
-  // corner into the channel. Both numbers are raised TOGETHER by 0.735 because down and right
-  // are 45 apart: an equal step along each is 1.04 units of pure +X, straight away from the
-  // water, with no sideways drift. That leaves the barn standing 0.5 clear of the bank (its
-  // footprint is 1.82 x 1.32 at BARN.height, the channel's far edge is x -23.41) and costs
-  // 0.44 of extra walk from the cow. Everything the barn was solved against is measured from
-  // the FIELD, so moving them together leaves all of it intact.
-  down: 4.985,
-  right: -1.265,
+  // corner into the channel. Raising both numbers TOGETHER is what answers that: down and
+  // right are 45 apart, so an equal step along each is pure +X, straight away from the water,
+  // with no sideways drift. Everything the barn was solved against is measured from the FIELD,
+  // so moving them together leaves all of it intact.
+  //
+  // 5.25 / -1.0 is that same correction applied again, for FORWARD.distance 0.8 and
+  // CROSSING.beyond 1.0 — the cow beat came another 0.7 closer to the bridge, so the field
+  // comes 0.7 further out from it and the barn ends up where it already was, 0.31 off the
+  // channel against the 0.28 it had. The walk from the cow grows 0.15 for it (2.84 against
+  // 2.65) and the one to the barn falls to 0.73, so there is LESS walking after the bridge
+  // than before, not more: 3.57 units against 3.97.
+  down: 5.25,
+  right: -1.0,
   // How far short of the field's middle they pull up, so they stand at the edge
   // of the soil rather than in it. 2.5 rather than the ~1.7 the beds actually
   // measure: the walk now comes in DIAGONALLY across a field squared to the world
@@ -864,11 +903,18 @@ const BARN = {
   // a spot they can reach without walking over the crop leaves only this band. At
   // -5.25 they pass the left edge of the field with 0.54 to spare, on a 4.2u walk;
   // moving it back towards the field trades that clearance away fast.
-  // Solved with the farmland (scratchpad/tighten.mjs) for a 1.8-unit walk from the crop to
-  // the barn — a couple of strides rather than the 4.2 it was. Negative `down` means it sits
+  // Solved with the farmland (scratchpad/tighten.mjs) for a short walk from the crop to the
+  // barn — a couple of strides rather than the 4.2 it was. Negative `down` means it sits
   // UP-screen of the field, which is what keeps the walk off the beds they just planted.
-  down: -2.75,
-  right: -3.5,
+  //
+  // -2.7 / -3.05 is the re-solve for the tightened crossing (FORWARD.distance 0.8): the field
+  // moved 0.7 further from the cow, and the barn has to come back the same amount towards it
+  // or it ends up in the channel, which is the one thing on this bank there is no room for.
+  // The walk to it is 0.73 units rather than 1.32 as a result — the shortest of the three
+  // legs, and the one worth spending, because it is the only one where the beat has already
+  // been set up by the beat before it.
+  down: -2.7,
+  right: -3.05,
   ahead: 2.8, // how far short of it they pull up
   // Height in world units — but it is the BOUNDING BOX that gets scaled to it, not the
   // building, and for this model those are very different things. Barn.glb carries a
@@ -880,8 +926,10 @@ const BARN = {
   // 2.8 of box puts the ridge at 1.82, the cupola at 2.25 and 1.76 x 2.42 on the ground:
   // 30% more footprint than the wreck and a silhouette that tops it by 0.65.
   // The ceiling is the STREAM, not the frame — at 2.8 the barn's screen-left corner stands
-  // 0.28 off the channel's far edge (x -23.41), which is the same standoff the wreck has
-  // been sitting at all along, so nothing comes nearer the water than what is already there.
+  // 0.31 off the channel's far edge (x -23.41), about the standoff the wreck has been sitting
+  // at all along, so nothing comes nearer the water than what is already there. That 0.31 is
+  // also what stops the cow beat being pulled any closer to the bridge than it now is: see
+  // FORWARD.distance.
   height: 2.8,
   // ...and the wreck it replaces, kept LOWER on purpose. Half of it is down, so
   // it should not stand as tall as the barn it becomes — and the difference is
@@ -5768,7 +5816,7 @@ export class IslandScene {
 
   private updateCamera(): void {
     const aspect = this.width / this.height;
-    const halfW = Math.max(this.need.w, this.need.h * aspect);
+    const halfW = Math.max(this.need.w, this.need.h * aspect) * (aspect < 1 ? PORTRAIT_ZOOM : 1);
     const halfH = halfW / aspect;
     this.camera.left = -halfW;
     this.camera.right = halfW;

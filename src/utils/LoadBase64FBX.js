@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { clone as cloneSkinnedModel } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { createTextureUrlModifier, getFBXTextures, getFBXTextureMaterialDefaults, resolveTextureKey } from './LoadBase64Textures.js';
 
@@ -604,7 +605,9 @@ function createGLTFLoader (scene)
     const manager = new THREE.LoadingManager();
     manager.setURLModifier(createTextureUrlModifier(scene));
 
-    return new GLTFLoader(manager);
+    // assets/models/*.glb ship EXT_meshopt_compression, which is a REQUIRED
+    // extension — without the decoder the loader rejects the file outright.
+    return new GLTFLoader(manager).setMeshoptDecoder(MeshoptDecoder);
 }
 
 /**
