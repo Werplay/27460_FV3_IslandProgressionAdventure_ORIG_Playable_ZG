@@ -23,7 +23,7 @@ export type IslandStage = 'rubble' | 'bridge' | 'cow' | 'farm' | 'barn' | 'expan
 
 export const DEBUG_CONFIG = {
 
-  debugStart: true,
+  debugStart: false,
   scene: 'island' as DebugScene,
   stage: 'expansion' as IslandStage
 };

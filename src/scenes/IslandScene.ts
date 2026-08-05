@@ -131,6 +131,8 @@ import axeSrc from 'assets/images/props/Axe.png';
 import broomSrc from 'assets/images/props/broom.png';
 import woodSrc from 'assets/images/Wood.png';
 import bubbleSrc from 'assets/images/DialogueBox.png';
+import logoSrc from 'assets/images/Logo.png';
+import fontSrc from 'assets/fonts/MasalaPro-Bold.otf';
 
 // Grass land width/depth. Big enough from the start to hold the whole playable: the beats
 // run down the western half and the village sits in the east. It used to be 25 and was
@@ -140,7 +142,7 @@ import bubbleSrc from 'assets/images/DialogueBox.png';
 const ISLAND_SIZE = 64;
 const ISLAND_HEIGHT = 2;
 const ISLAND_HALF = ISLAND_SIZE / 2;
-const FIT_RADIUS = 2.5; // world half-width kept in frame at the opening
+const FIT_RADIUS = 2.3; // world half-width kept in frame at the opening
 
 // How much a shot has to hold UP AND DOWN against how much it holds ACROSS.
 //
@@ -155,6 +157,30 @@ const FRAME_HEIGHT_RATIO = 0.62;
 // this is their separation plus room for a speech bubble: it is the floor that stops a
 // content-measured frame from closing in on them while the camera is merely following.
 const FRAME_MIN_WIDTH = 2.1;
+
+/**
+ * The OPENING shot: the rubble beat, the run and the rocks breaking all sit on this one frame,
+ * because nothing reframes until they pull up at the bridge.
+ *
+ * Per orientation, in the same terms every other shot here uses — `w` is how far the beat must
+ * hold ACROSS the screen, `h` how far UP it, both world units, and updateCamera grows the
+ * frustum until it holds both. Bigger numbers pull back.
+ *
+ * Portrait is FIT_RADIUS by FRAME_HEIGHT_RATIO: what the opening has always been.
+ *
+ * Landscape gets its own pair, and its HEIGHT is the number that matters. A wide frame shows
+ * far less ground up-screen for the same zoom — portrait holds 4.1 units of height at this
+ * width, landscape only 1.6 — so asking for a small `h` there does not tighten the shot, it
+ * crops the rubble arc off the bottom of it. 2.6 is what holds the whole arc, the pair and the
+ * boat; the frame comes out 4.6 across, which is wider than portrait's and shows more shore.
+ *
+ * Neither `w` should go below about 1.6: the two of them stand 1.5 apart and one would start to
+ * clip. (FRAME_MIN_WIDTH is the floor for content-measured shots, not for this one.)
+ */
+const OPENING_FRAME = {
+  portrait: { w: FIT_RADIUS, h: FIT_RADIUS * FRAME_HEIGHT_RATIO },
+  landscape: { w: 2.8, h: 2.6 }
+};
 
 // Lighting, taken from the reference playable (its ThreeSceneManager.addLights).
 const LIGHTS = {
@@ -344,6 +370,14 @@ const TOOL_CHOICE = {
   // two thirds of the hand was cut off by the bottom of the frame, which is the one
   // part of this row the player is meant to follow.
   bottom: '20vmin',
+  // ...and in LANDSCAPE, where 20vmin is a fifth of a short screen and the row landed on top
+  // of the two characters. Smaller buttons and much less inset: the hand still needs about
+  // 0.39 of a button beneath the row (it overlaps the button by handOverlay and hangs below by
+  // the rest), which 9vmin covers.
+  //
+  // Applied as CSS custom properties with an orientation media query, not by measuring the
+  // window in JS — the browser then re-lays the row out on a rotation with nothing to hook.
+  landscape: { button: 'min(16vmin, 110px)', bottom: '9vmin', gap: '4vmin' },
   radius: '3vmin',
   fade: 250, // ms, in and again once one is picked
   // The pointing hand, as a fraction of the button. It points UP, so it hangs below the
@@ -361,6 +395,41 @@ const TOOL_CHOICE = {
   handTip: { x: 0.175, y: 0.075 },
   hint: 1200, // ms before the hand appears, matching TAP_HINT.delay
   shake: 400 // ms the wrong tool wobbles for
+};
+
+/**
+ * The brand mark, top right, up for the whole playable.
+ *
+ * Sized per orientation the way the tool row is — CSS variables behind an orientation media
+ * query, so a rotation re-lays it out with nothing to hook. The widths come from the
+ * reference's own brandLogo (350 design px portrait, 190 landscape, against its 1136x640
+ * design), which work out to about 31% and 17% of the screen's width.
+ */
+/**
+ * The ad's typeface, and what to fall back to for the frame or two before it arrives.
+ *
+ * Loaded through the FontFace API rather than an @font-face rule, because the speech bubbles
+ * are drawn into a CANVAS: canvas text falls back silently if the face is not ready at the
+ * moment it draws, with no way to tell after the fact. document.fonts.add() then makes it
+ * available to CSS as well, so the DOM text uses the same one knob.
+ */
+const FONT = {
+  family: 'MasalaPro',
+  stack: '"MasalaPro", "Trebuchet MS", "Segoe UI", Arial, sans-serif',
+  weight: '700'
+};
+
+const BRAND = {
+  width: { portrait: '31vw', landscape: '17vw' },
+  inset: { portrait: '2.5vmin', landscape: '2vmin' },
+  fade: 0.4, // seconds, so it arrives with the world rather than being there before it
+  // UNDER the Phaser overlay, which Game parks at z-index 10 — and that is what keeps the mark
+  // off the intro video. The video is opaque and covers it; once it has played and the clouds
+  // have receded, that same canvas is transparent and the logo shows through with the world. So
+  // nothing has to tell it when to appear, and it cannot get stuck hidden if a transition hook
+  // is missed. Above the 3D canvas (z auto), below the tool row (20), the dim (19) and the end
+  // card (30) — the card carries its own logo, and this must never cover a button.
+  zIndex: '9'
 };
 
 // How the characters take off once the way is open.
@@ -869,14 +938,26 @@ const EXPANSION = {
   // deliberately WIDER than that frame, which is why the reference looks dense and full
   // rather than showing a whole island at once.
   centre: { x: 1.34, z: -1.34 },
-  // Opened out as far as the island allows. The reference's own frame is half-width 4.22 by
-  // half-height 7.5 (what its camera config works out to), and this is that shot zoomed out
-  // to 6.0 — the point at which the frame's corners reach the shoreline. At 6.2 the top-right
-  // corner is exactly on the grass edge and at 6.5 there is ocean in it, which is what moving
-  // the village down and left bought: room to pull back this far and still fill the frame with
-  // land. Given as a BOX so it holds on any aspect — the width binds on a 9:16 phone, the
-  // height on anything narrower.
-  frame: { w: 8.12, h: 14.44 },
+  // How far the reveal pulls back, PER ORIENTATION — a phone held the two ways wants
+  // different things from this shot.
+  //
+  // Both are content boxes rather than zoom factors: `w` is how far the town reaches across
+  // the screen and `h` how far up it, in world units, and updateCamera grows the frustum until
+  // it holds BOTH. So whichever the screen makes binding decides the zoom, and nothing the
+  // shot asked for can be cropped either way. Bigger numbers = further back.
+  //
+  // Portrait is the measured fit: 8.12 x 14.44 holds the whole village with the frame's
+  // corners 28.9 units out, against the 32 where the grass ends. Landscape needs the same
+  // width but nothing like the height, so its `h` is cut to what the town actually occupies
+  // up-screen — leave it high and the shot pulls back for empty sky.
+  //
+  // Watch the corners when raising either: their reach is about 3.5x the half-width, and past
+  // 31 the ocean comes into frame. scratchpad/village-extend.mjs re-measures and prints both
+  // numbers after props move.
+  frame: {
+    portrait: { w: 6.12, h: 12.44 },
+    landscape: { w: 8.12, h: 6.6 }
+  },
   ease: 2.4, // slow: this is the reveal, not a cut
   // --- the village ---
   //
@@ -940,46 +1021,47 @@ const EXPANSION = {
     { src: roadSrc, at: { x: 25.21, z: -4.25 }, yawDeg: 180, length: 21.5, width: 1.15 },
     { src: roadSrc, at: { x: 33.45, z: 0 }, yawDeg: 180, length: 30, width: 1.15 },
     { src: roadSrc, at: { x: 55.62, z: 13 }, yawDeg: 180, length: 11, width: 1.15 },
-    // A ring road, and a smaller one: every other street out here runs along world x or z,
-    // which is what makes a grid read as systematic however its spacing is jittered. The
-    // road model is a straight strip, so a circle is a polygon of short tangential segments
-    // overlapped 12% at the joins. Sized to the gap it landed in by scratchpad/village-fill.mjs.
-    { src: roadSrc, at: { x: -15.98, z: -40.39 }, yawDeg: 90, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -14.65, z: -40.63 }, yawDeg: 110, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -13.48, z: -41.31 }, yawDeg: 130, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -12.6, z: -42.35 }, yawDeg: 150, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -12.14, z: -43.62 }, yawDeg: 170, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -12.14, z: -44.98 }, yawDeg: 190, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -12.6, z: -46.25 }, yawDeg: 210, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -13.48, z: -47.29 }, yawDeg: 230, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -14.65, z: -47.96 }, yawDeg: 250, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -15.98, z: -48.2 }, yawDeg: 270, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -17.32, z: -47.96 }, yawDeg: 290, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -18.49, z: -47.29 }, yawDeg: 310, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -19.36, z: -46.25 }, yawDeg: 330, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -19.83, z: -44.98 }, yawDeg: 350, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -19.83, z: -43.62 }, yawDeg: 370, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -19.36, z: -42.35 }, yawDeg: 390, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -18.49, z: -41.31 }, yawDeg: 410, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: -17.32, z: -40.63 }, yawDeg: 430, length: 1.53, width: 1.15 },
-    { src: roadSrc, at: { x: 7.35, z: -30.76 }, yawDeg: 90, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 8.35, z: -30.93 }, yawDeg: 110, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 9.24, z: -31.44 }, yawDeg: 130, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 9.89, z: -32.22 }, yawDeg: 150, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 10.24, z: -33.18 }, yawDeg: 170, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 10.24, z: -34.2 }, yawDeg: 190, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 9.89, z: -35.16 }, yawDeg: 210, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 9.24, z: -35.94 }, yawDeg: 230, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 8.35, z: -36.45 }, yawDeg: 250, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 7.35, z: -36.63 }, yawDeg: 270, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 6.35, z: -36.45 }, yawDeg: 290, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 5.46, z: -35.94 }, yawDeg: 310, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 4.81, z: -35.16 }, yawDeg: 330, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 4.46, z: -34.2 }, yawDeg: 350, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 4.46, z: -33.18 }, yawDeg: 370, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 4.81, z: -32.22 }, yawDeg: 390, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 5.46, z: -31.44 }, yawDeg: 410, length: 1.15, width: 1.15 },
-    { src: roadSrc, at: { x: 6.35, z: -30.93 }, yawDeg: 430, length: 1.15, width: 1.15 },
+    // Two ring roads. Every other street out here runs along world x or z, which is what
+    // makes a grid read as systematic however its spacing is jittered; a curve carries every
+    // heading at once. The road model is a straight strip, so a circle is a polygon of short
+    // tangential segments overlapped 12% at the joins — and they are SHORT, which is how
+    // scratchpad/village-fill.mjs tells its own segments from a street when it re-solves.
+    { src: roadSrc, at: { x: -15.98, z: -40.69 }, yawDeg: 90, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -14.75, z: -40.91 }, yawDeg: 110, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -13.67, z: -41.54 }, yawDeg: 130, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -12.86, z: -42.5 }, yawDeg: 150, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -12.44, z: -43.67 }, yawDeg: 170, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -12.44, z: -44.92 }, yawDeg: 190, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -12.86, z: -46.1 }, yawDeg: 210, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -13.67, z: -47.06 }, yawDeg: 230, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -14.75, z: -47.68 }, yawDeg: 250, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -15.98, z: -47.9 }, yawDeg: 270, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -17.22, z: -47.68 }, yawDeg: 290, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -18.3, z: -47.06 }, yawDeg: 310, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -19.1, z: -46.1 }, yawDeg: 330, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -19.53, z: -44.92 }, yawDeg: 350, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -19.53, z: -43.67 }, yawDeg: 370, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -19.1, z: -42.5 }, yawDeg: 390, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -18.3, z: -41.54 }, yawDeg: 410, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: -17.22, z: -40.91 }, yawDeg: 430, length: 1.41, width: 1.15 },
+    { src: roadSrc, at: { x: 7.35, z: -31.06 }, yawDeg: 90, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 8.25, z: -31.22 }, yawDeg: 110, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 9.04, z: -31.67 }, yawDeg: 130, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 9.63, z: -32.37 }, yawDeg: 150, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 9.95, z: -33.23 }, yawDeg: 170, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 9.95, z: -34.15 }, yawDeg: 190, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 9.63, z: -35.01 }, yawDeg: 210, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 9.04, z: -35.71 }, yawDeg: 230, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 8.25, z: -36.17 }, yawDeg: 250, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 7.35, z: -36.33 }, yawDeg: 270, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 6.45, z: -36.17 }, yawDeg: 290, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 5.66, z: -35.71 }, yawDeg: 310, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 5.07, z: -35.01 }, yawDeg: 330, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 4.76, z: -34.15 }, yawDeg: 350, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 4.76, z: -33.23 }, yawDeg: 370, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 5.07, z: -32.37 }, yawDeg: 390, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 5.66, z: -31.67 }, yawDeg: 410, length: 1.03, width: 1.15 },
+    { src: roadSrc, at: { x: 6.45, z: -31.22 }, yawDeg: 430, length: 1.03, width: 1.15 },
   ],
   roadWidth: 1.15,
   lift: 0.01, // the roads are decals on the grass and need the same hair of clearance
@@ -1080,44 +1162,53 @@ const EXPANSION = {
     { key: 'kerb7', src: crateSrc, at: { x: 35.45, z: 13.58 }, size: 1, yawDeg: 0, align: 0 },
     { key: 'street30', src: siloSrc, at: { x: 52.26, z: 12.11 }, size: 2.16, yawDeg: 0, align: 0 },
     { key: 'parked1', src: vanSrc, at: { x: -24.6, z: -49.22 }, size: 2, yawDeg: 0, align: 90 },
-    // Around the ring roads, each turned to the TANGENT so the row curves with the street,
-    // plus filler dropped in the emptiest gaps at any angle at all — a filler prop is there
-    // to break the alignment. homeSrc and farmhouseSrc are deliberately absent: the first
-    // renders as a planter rather than a cottage, the second comes through the FBX
-    // conversion mangled.
+    // The ring frontages, each lot turned to the TANGENT so the row curves with the street,
+    // and filler in the emptiest gaps at any angle at all — breaking the alignment is a filler
+    // prop's whole job. homeSrc and farmhouseSrc are deliberately absent: the first renders as
+    // a planter rather than a cottage, the second comes through the FBX conversion mangled.
     { key: 'ring0Well', src: wellSrc, at: { x: -15.98, z: -44.3 }, size: 2.5, yawDeg: 0, align: 0 },
-    { key: 'ring0Lot0', src: feedMakerSrc, at: { x: -15.05, z: -37.65 }, size: 1.94, yawDeg: 0, align: 98 },
-    { key: 'ring0Lot6', src: coopSrc, at: { x: -22.49, z: -46.93 }, size: 2.64, yawDeg: 0, align: 338 },
+    { key: 'ring0Lot0', src: mailboxSrc, at: { x: -15.18, z: -38.61 }, size: 1.02, yawDeg: 0, align: 98 },
+    { key: 'ring0Lot4', src: milkJugSrc, at: { x: -12.15, z: -48.7 }, size: 0.65, yawDeg: 0, align: 228.9 },
+    { key: 'ring0Lot7', src: mailboxSrc, at: { x: -20.96, z: -47.52 }, size: 0.97, yawDeg: 0, align: 327.1 },
+    { key: 'ring0Lot8', src: sawmillSrc, at: { x: -21.9, z: -44.32 }, size: 1.93, yawDeg: 0, align: 359.8 },
+    { key: 'ring0Lot9', src: bakerySrc, at: { x: -21.05, z: -41.07 }, size: 1.77, yawDeg: 0, align: 392.5 },
+    { key: 'ring0Lot10', src: dairySrc, at: { x: -18.46, z: -38.92 }, size: 1.37, yawDeg: 0, align: 425.3 },
     { key: 'ring1Well', src: wellSrc, at: { x: 7.35, z: -33.69 }, size: 2.5, yawDeg: 0, align: 0 },
-    { key: 'ring1Lot2', src: bakerySrc, at: { x: 13.11, z: -33.49 }, size: 1.98, yawDeg: 0, align: 178 },
-    { key: 'ring1Lot5', src: tentSrc, at: { x: 4.63, z: -38.8 }, size: 1.99, yawDeg: 0, align: 298 },
-    { key: 'ring1Lot8', src: tentSrc, at: { x: 4.17, z: -28.59 }, size: 1.93, yawDeg: 0, align: 418 },
-    { key: 'fill0', src: kangarooSrc, at: { x: -1.34, z: -25.94 }, size: 1.43, yawDeg: 0, align: 222 },
-    { key: 'fill1', src: kangarooSrc, at: { x: 20.92, z: -0.33 }, size: 1.79, yawDeg: 0, align: 27.6 },
-    { key: 'fill2', src: milkJugSrc, at: { x: 26.49, z: -14.61 }, size: 0.66, yawDeg: 0, align: 255.4 },
-    { key: 'fill3', src: mailboxSrc, at: { x: -15.71, z: -46.71 }, size: 0.96, yawDeg: 0, align: 227.2 },
-    { key: 'fill4', src: rocksSrc, at: { x: 25.78, z: -17.6 }, size: 1.3, yawDeg: 0, align: 88.2 },
-    { key: 'fill5', src: rocksSrc, at: { x: -0.82, z: -35.62 }, size: 1.35, yawDeg: 0, align: 232.1 },
-    { key: 'fill6', src: rocksSrc, at: { x: 6.03, z: -27.71 }, size: 1.35, yawDeg: 0, align: 359.2 },
-    { key: 'fill7', src: mailboxSrc, at: { x: 51.58, z: 5.9 }, size: 1.14, yawDeg: 0, align: 291.9 },
-    { key: 'fill8', src: crateSrc, at: { x: -26.68, z: -48.35 }, size: 0.98, yawDeg: 0, align: 328.5 },
-    { key: 'fill9', src: lampSrc, at: { x: -5.06, z: -27.44 }, size: 1.4, yawDeg: 0, align: 306.4 },
-    { key: 'fill10', src: crateSrc, at: { x: 19.16, z: -26.4 }, size: 1.07, yawDeg: 0, align: 149.7 },
-    { key: 'fill11', src: rocksSrc, at: { x: 44.85, z: 13.01 }, size: 1.26, yawDeg: 0, align: 242 },
-    { key: 'fill12', src: milkJugSrc, at: { x: 31.77, z: -6.7 }, size: 0.54, yawDeg: 0, align: 9 },
-    { key: 'fill13', src: lampSrc, at: { x: 21.13, z: -2.35 }, size: 1.3, yawDeg: 0, align: 330.6 },
-    { key: 'fill14', src: lampSrc, at: { x: 42.56, z: 9.81 }, size: 1.26, yawDeg: 0, align: 25 },
-    { key: 'fill15', src: kangarooSrc, at: { x: 1.65, z: -28.37 }, size: 1.36, yawDeg: 0, align: 254.4 },
-    { key: 'fill16', src: crateSrc, at: { x: -3.84, z: -37.44 }, size: 0.89, yawDeg: 0, align: 328.3 },
-    { key: 'fill17', src: scarecrowSrc, at: { x: 31.94, z: -12.28 }, size: 1.51, yawDeg: 0, align: 161.5 },
-    { key: 'fill18', src: crateSrc, at: { x: 21.15, z: -21.44 }, size: 0.88, yawDeg: 0, align: 89.8 },
-    { key: 'fill19', src: milkJugSrc, at: { x: -6.67, z: -48.82 }, size: 0.55, yawDeg: 0, align: 146.8 },
-    { key: 'fill20', src: rocksSrc, at: { x: -7.61, z: -31.5 }, size: 1.32, yawDeg: 0, align: 228.6 },
-    { key: 'fill21', src: scarecrowSrc, at: { x: -0.63, z: -46.02 }, size: 1.24, yawDeg: 0, align: 164 },
-    { key: 'fill22', src: rocksSrc, at: { x: -6.19, z: -41.29 }, size: 1.33, yawDeg: 0, align: 207.2 },
-    { key: 'fill23', src: windChimeSrc, at: { x: -11.3, z: -34.04 }, size: 1.75, yawDeg: 0, align: 218.8 },
-    { key: 'fill24', src: windmillSrc, at: { x: 45.31, z: 1.12 }, size: 2.47, yawDeg: 0, align: 61.5 },
-    { key: 'fill25', src: lampSrc, at: { x: 3.43, z: -22.84 }, size: 1.31, yawDeg: 0, align: 24.5 },
+    { key: 'ring1Lot0', src: mailboxSrc, at: { x: 8.02, z: -28.96 }, size: 1.02, yawDeg: 0, align: 98 },
+    { key: 'ring1Lot2', src: bakerySrc, at: { x: 11.94, z: -32.33 }, size: 1.79, yawDeg: 0, align: 163.5 },
+    { key: 'ring1Lot3', src: dairySrc, at: { x: 11.79, z: -34.98 }, size: 1.46, yawDeg: 0, align: 196.2 },
+    { key: 'ring1Lot5', src: lampSrc, at: { x: 8.05, z: -38.44 }, size: 1.29, yawDeg: 0, align: 261.6 },
+    { key: 'ring1Lot10', src: jamStationSrc, at: { x: 5.28, z: -29.19 }, size: 1.56, yawDeg: 0, align: 425.3 },
+    { key: 'fill0', src: kangarooSrc, at: { x: 6.21, z: -38.8 }, size: 1.6, yawDeg: 0, align: 47.8 },
+    { key: 'fill1', src: kangarooSrc, at: { x: -1.34, z: -25.94 }, size: 1.43, yawDeg: 0, align: 222 },
+    { key: 'fill2', src: kangarooSrc, at: { x: 3.37, z: -39.21 }, size: 1.82, yawDeg: 0, align: 97.6 },
+    { key: 'fill3', src: kangarooSrc, at: { x: 20.92, z: -0.33 }, size: 1.79, yawDeg: 0, align: 27.6 },
+    { key: 'fill4', src: milkJugSrc, at: { x: 26.49, z: -14.61 }, size: 0.66, yawDeg: 0, align: 255.4 },
+    { key: 'fill5', src: mailboxSrc, at: { x: -15.71, z: -46.71 }, size: 0.96, yawDeg: 0, align: 227.2 },
+    { key: 'fill6', src: rocksSrc, at: { x: 25.78, z: -17.6 }, size: 1.3, yawDeg: 0, align: 88.2 },
+    { key: 'fill7', src: rocksSrc, at: { x: -0.82, z: -35.62 }, size: 1.35, yawDeg: 0, align: 232.1 },
+    { key: 'fill8', src: mailboxSrc, at: { x: 51.58, z: 5.9 }, size: 1.14, yawDeg: 0, align: 291.9 },
+    { key: 'fill9', src: crateSrc, at: { x: -26.68, z: -48.35 }, size: 0.98, yawDeg: 0, align: 328.5 },
+    { key: 'fill10', src: lampSrc, at: { x: -5.06, z: -27.44 }, size: 1.4, yawDeg: 0, align: 306.4 },
+    { key: 'fill11', src: crateSrc, at: { x: 19.16, z: -26.4 }, size: 1.07, yawDeg: 0, align: 149.7 },
+    { key: 'fill12', src: rocksSrc, at: { x: 44.85, z: 13.01 }, size: 1.26, yawDeg: 0, align: 242 },
+    { key: 'fill13', src: milkJugSrc, at: { x: 31.77, z: -6.7 }, size: 0.54, yawDeg: 0, align: 9 },
+    { key: 'fill14', src: lampSrc, at: { x: 21.13, z: -2.35 }, size: 1.3, yawDeg: 0, align: 330.6 },
+    { key: 'fill15', src: lampSrc, at: { x: 42.56, z: 9.81 }, size: 1.26, yawDeg: 0, align: 25 },
+    { key: 'fill16', src: kangarooSrc, at: { x: 1.65, z: -28.37 }, size: 1.36, yawDeg: 0, align: 254.4 },
+    { key: 'fill17', src: crateSrc, at: { x: -3.84, z: -37.44 }, size: 0.89, yawDeg: 0, align: 328.3 },
+    { key: 'fill18', src: scarecrowSrc, at: { x: 31.94, z: -12.28 }, size: 1.51, yawDeg: 0, align: 161.5 },
+    { key: 'fill19', src: crateSrc, at: { x: 21.15, z: -21.44 }, size: 0.88, yawDeg: 0, align: 89.8 },
+    { key: 'fill20', src: milkJugSrc, at: { x: -6.67, z: -48.82 }, size: 0.55, yawDeg: 0, align: 146.8 },
+    { key: 'fill21', src: rocksSrc, at: { x: -7.61, z: -31.5 }, size: 1.32, yawDeg: 0, align: 228.6 },
+    { key: 'fill22', src: milkJugSrc, at: { x: -23.3, z: -47.76 }, size: 0.52, yawDeg: 0, align: 89.8 },
+    { key: 'fill23', src: scarecrowSrc, at: { x: -0.63, z: -46.02 }, size: 1.24, yawDeg: 0, align: 164 },
+    { key: 'fill24', src: rocksSrc, at: { x: -6.19, z: -41.29 }, size: 1.33, yawDeg: 0, align: 207.2 },
+    { key: 'fill25', src: windChimeSrc, at: { x: -11.3, z: -34.04 }, size: 1.75, yawDeg: 0, align: 218.8 },
+    { key: 'fill26', src: windmillSrc, at: { x: 45.31, z: 1.12 }, size: 2.47, yawDeg: 0, align: 61.5 },
+    { key: 'fill27', src: lampSrc, at: { x: 3.43, z: -22.84 }, size: 1.31, yawDeg: 0, align: 24.5 },
+    { key: 'fill28', src: rocksSrc, at: { x: 39.72, z: -6.39 }, size: 1.21, yawDeg: 0, align: 153.6 },
+    { key: 'fill29', src: bonfireSrc, at: { x: 10.2, z: -12.1 }, size: 1.15, yawDeg: 0, align: 244.2 },
   ] as VillageProp[],
   // The pens, and what makes the whole thing read as a farm: runs of white fence around
   // the cow shed, the coop and the crop. Each run is a row of panels from its middle,
@@ -1165,15 +1256,6 @@ const EXPANSION = {
     { src: truckElectricSrc, at: { x: -9.14, z: -34.49 }, height: 1.5, yawDeg: 0, align: 180 },
   ] as Array<{ src: string; at: { x: number; z: number }; height: number; yawDeg: number; align?: number }>,
   idle: { rise: 0.012, rate: 9.5, rock: 0.5 }, // world units, rad/s, degrees
-  // One arrow per KIND of opportunity, each ON the prop it points at. These carried the same
-  // stale offset the crop did, so three of the four hovered over open grass.
-  arrows: [
-    { at: { x: 7.5, z: -24 }, over: 3.4 }, // the farmhouse
-    { at: { x: 14.5, z: -24 }, over: 3.8 }, // the cow shed and its pen
-    { at: { x: 5, z: -21.5 }, over: 1.9 }, // the vehicles
-    { at: { x: 20.5, z: -13.5 }, over: 0.9 } // the crop
-  ],
-  arrow: { size: 1.8, bob: 0.3, rate: 2.2, fade: 0.4, stagger: 0.22 },
   // --- the call to action ---
   //
   // Three upgrades to choose from, each with a down arrow over it, and any of them ends the
@@ -1189,7 +1271,51 @@ const EXPANSION = {
     icon: 256, // px each icon is rendered at
     tone: 0xf0e2c0, // what an untextured icon is painted
     // The down arrow over each button, as a fraction of the button
-    arrow: { size: 0.52, gap: 0.06, bob: 0.16, rate: 1.15, stagger: 0.18, fade: 0.35 }
+    arrow: { size: 0.52, gap: 0.06, bob: 0.16, rate: 1.15, stagger: 0.18, fade: 0.35 },
+    // A warm halo, so the arrows and the buttons read as live against the grass.
+    //
+    // The arrow's is a filter on the ART, not a box on its element: the PNG is a shape on a
+    // transparent square, and a box-shadow would outline the square. Two drop-shadows stack
+    // into one soft falloff — a single wide one is faint at the edge of the glow.
+    glow: {
+      arrow:
+        'drop-shadow(0 0 0.7vmin rgba(255,214,120,0.95)) drop-shadow(0 0 2vmin rgba(255,150,20,0.6))',
+      // The button's own glow PULSES between these two, keeping its existing drop shadow so it
+      // still sits on the grass rather than floating.
+      button: {
+        dim: '0 0.6vmin 1.4vmin rgba(0,0,0,0.25), 0 0 0.6vmin 0 rgba(255,205,90,0.3)',
+        bright: '0 0.6vmin 1.4vmin rgba(0,0,0,0.25), 0 0 3.2vmin 0.9vmin rgba(255,205,90,0.95)'
+      },
+      pulse: 1.25 // seconds for one breath, in and out
+    },
+    // The screen goes dark behind the three buttons, so the choice is the only lit thing left.
+    //
+    // `enabled` is the shipped default and can be flipped at runtime with ?dim=0 / ?dim=1 —
+    // that is there so the two versions can be demoed back to back without a rebuild. A query
+    // string never reaches a real placement (the playable ships as one inlined HTML file), so
+    // the override is harmless in release.
+    // The line over the choice. Sits above the arrows, in the same CSS variables the row uses,
+    // so it holds its place relative to the buttons at any size or orientation.
+    title: {
+      text: 'Upgrade to Lvl. 2',
+      size: { portrait: '5.6vmin', landscape: '4.4vmin' },
+      // How far above the row's bottom edge it sits, in BUTTON heights: one for the button
+      // itself, about 0.58 for the arrow and its gap, and the rest is breathing room.
+      lift: 1.8
+    },
+    // The line and the buttons POP in: from nothing up to full size, easing in and out. Only
+    // the transform is animated — the fade stays on the element's own opacity transition, so
+    // clearing the row still fades it out.
+    //
+    // All three arrive TOGETHER. The stagger below is for the loops that run afterwards (the
+    // arrows' bob and the buttons' glow), where offsetting them stops the three beating like a
+    // metronome; an entrance is one moment, and staggering that read as three separate events.
+    pop: { scale: 0, seconds: 0.2, ease: 'ease-in-out' },
+    dim: {
+      enabled: true,
+      colour: 'rgba(0, 0, 0, 0.55)',
+      fade: 0.45 // seconds, matched to the arrows coming in over it
+    }
   },
   // --- the ground the village stands on ---
   //
@@ -1223,6 +1349,20 @@ const EXPANSION = {
     rocks: { count: 34, inner: 6.5, outer: 36, min: 0.4, max: 1.0, spacing: 0.9, salt: 311 }
   }
 };
+
+/**
+ * Whether to darken the screen behind the call to action: the config's own setting, unless
+ * ?dim=0 or ?dim=1 says otherwise. For demoing the two versions back to back.
+ */
+function dimWanted(fallback: boolean): boolean {
+  try {
+    const asked = new URLSearchParams(window.location.search).get('dim');
+    if (asked === null) return fallback;
+    return !(asked === '0' || asked.toLowerCase() === 'false' || asked.toLowerCase() === 'off');
+  } catch {
+    return fallback; // no location to read (a headless or embedded host)
+  }
+}
 
 /** Is `node` somewhere under `root`? Used to keep one branch of a model and hide the rest. */
 function isDescendant(node: THREE.Object3D, root: THREE.Object3D): boolean {
@@ -1414,7 +1554,7 @@ const SPEECH = {
   // anyone edits a line, and every one of the three below overran the bubble at
   // the size that looked right on paper.
   fontSize: 34,
-  fontStack: '"Trebuchet MS", "Segoe UI", Arial, sans-serif',
+  fontStack: FONT.stack,
   lineSpacing: 1.15
 };
 
@@ -1845,6 +1985,10 @@ export class IslandScene {
   private speaker = 0; // whose turn it is to talk; every line swaps it
   private bubbleImage?: HTMLImageElement;
   private finishing = false; // the end card is a one-way door — see finishAd
+  private ctaShade?: HTMLElement; // the dark layer behind the call to action
+  private brand?: HTMLElement; // the logo in the corner
+  private fontReady = false; // see loadFont: the bubbles cannot be drawn until it is
+  private ctaTitle?: HTMLElement; // the line over the choice
   // Characters currently under way. Populated by the break, emptied as each one
   // covers RUN.distance.
   private runners: Array<{
@@ -1910,11 +2054,23 @@ export class IslandScene {
   // world units. The zoom is solved from this and the device's aspect rather than being a
   // single number, which is what makes the framing survive a 375x667 phone as well as a
   // tall one — see updateCamera.
-  private need = { w: FIT_RADIUS, h: FIT_RADIUS * FRAME_HEIGHT_RATIO };
+  private need = { ...OPENING_FRAME.portrait };
+  // Set when a beat asks to be framed PER ORIENTATION. Kept, not just resolved and forgotten:
+  // a rotation has to be able to pick the other box, which is what it could not do before —
+  // the shot resolved once when the beat started, and updateCamera then re-derived the frustum
+  // from a box belonging to the orientation the player had left.
+  private needFor?: { portrait: { w: number; h: number }; landscape: { w: number; h: number } };
 
   constructor(width: number, height: number, stage: IslandStage = 'rubble') {
     this.width = width;
     this.height = height;
+    // The opening is framed per orientation, through the same machinery as the expansion's
+    // reveal: keep the pair and resolve it against the screen. A device rotated during the
+    // rubble beat then re-frames on its own, and resize() needs no special case for it.
+    this.needFor = OPENING_FRAME;
+    this.need = { ...this.resolveNeed(OPENING_FRAME) };
+    this.addBrandLogo();
+    this.loadFont();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -2391,7 +2547,7 @@ export class IslandScene {
       // middle of the button. At left 60% the hand hung off the button's right-hand side
       // and pointed at nothing.
       left: `calc(50% - ${TOOL_CHOICE.hand * TOOL_CHOICE.handTip.x * 100}%)`,
-      width: `calc(${TOOL_CHOICE.button} * ${TOOL_CHOICE.hand})`,
+      width: `calc(var(--choice-button) * ${TOOL_CHOICE.hand})`,
       pointerEvents: 'none'
     } as CSSStyleDeclaration);
     right.appendChild(hand);
@@ -2406,6 +2562,66 @@ export class IslandScene {
       ],
       { duration: TAP_HINT.cycle * 1000, iterations: Infinity, delay: TOOL_CHOICE.hint }
     );
+  }
+
+  /**
+   * Bring the typeface in. Resolves `fontReady` either way — if the face fails to load, the
+   * stack's fallbacks are perfectly readable and a playable that never draws its speech is not.
+   */
+  private loadFont(): void {
+    if (typeof FontFace === 'undefined') {
+      this.fontReady = true;
+      return;
+    }
+    const face = new FontFace(FONT.family, `url(${fontSrc})`, { weight: FONT.weight });
+    face
+      .load()
+      .then((loaded) => {
+        document.fonts.add(loaded);
+        this.fontReady = true;
+      })
+      .catch((err: unknown) => {
+        console.error('Font failed to load, falling back:', err);
+        this.fontReady = true;
+      });
+  }
+
+  /** The brand mark in the top-right corner, for as long as the playable is up. */
+  private addBrandLogo(): void {
+    if (!document.getElementById('island-brand-css')) {
+      const style = document.createElement('style');
+      style.id = 'island-brand-css';
+      style.textContent = `
+        .island-brand {
+          --brand-width: ${BRAND.width.portrait};
+          --brand-inset: ${BRAND.inset.portrait};
+        }
+        @media (orientation: landscape) {
+          .island-brand {
+            --brand-width: ${BRAND.width.landscape};
+            --brand-inset: ${BRAND.inset.landscape};
+          }
+        }`;
+      document.head.appendChild(style);
+    }
+
+    const logo = document.createElement('img');
+    logo.className = 'island-brand';
+    logo.src = logoSrc;
+    Object.assign(logo.style, {
+      position: 'fixed',
+      top: 'var(--brand-inset)',
+      right: 'var(--brand-inset)',
+      width: 'var(--brand-width)',
+      height: 'auto',
+      opacity: '0',
+      transition: `opacity ${BRAND.fade}s`,
+      pointerEvents: 'none', // never in the way of a tap
+      zIndex: BRAND.zIndex
+    } as CSSStyleDeclaration);
+    document.body.appendChild(logo);
+    requestAnimationFrame(() => (logo.style.opacity = '1'));
+    this.brand = logo;
   }
 
   /**
@@ -2566,16 +2782,69 @@ export class IslandScene {
     // The icons are awaited, so the ad can be torn down while they render.
     if (!this.running) return;
 
+    // Dark behind the buttons, under the row but over everything else — the row is at 20 and
+    // the end card at 30, so 19 leaves both clear. It takes no pointer events at all: the
+    // buttons sit above it and would still be tappable, but a dead layer cannot be the thing
+    // that swallows a tap, and this row has been through that once already.
+    if (dimWanted(EXPANSION.cta.dim.enabled)) {
+      const shade = document.createElement('div');
+      Object.assign(shade.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        right: '0',
+        bottom: '0',
+        background: EXPANSION.cta.dim.colour,
+        opacity: '0',
+        transition: `opacity ${EXPANSION.cta.dim.fade}s`,
+        pointerEvents: 'none',
+        zIndex: '19'
+      } as CSSStyleDeclaration);
+      document.body.appendChild(shade);
+      requestAnimationFrame(() => (shade.style.opacity = '1'));
+      this.ctaShade = shade;
+    }
+
+    const title = document.createElement('div');
+    title.className = 'island-choice'; // for the button/bottom variables it is placed against
+    title.textContent = cta.title.text;
+    Object.assign(title.style, {
+      position: 'fixed',
+      left: '0',
+      right: '0',
+      bottom: `calc(var(--choice-bottom) + var(--choice-button) * ${cta.title.lift})`,
+      textAlign: 'center',
+      font: `700 var(--title-size) ${SPEECH.fontStack}`,
+      color: '#ffffff',
+      textShadow: '0 0.3vmin 0.8vmin rgba(0,0,0,0.75)',
+      opacity: '0',
+      transition: `opacity ${cta.arrow.fade}s`,
+      pointerEvents: 'none',
+      zIndex: '20'
+    } as CSSStyleDeclaration);
+    title.style.setProperty('--title-size', cta.title.size.portrait);
+    if (this.width > this.height) title.style.setProperty('--title-size', cta.title.size.landscape);
+    document.body.appendChild(title);
+    requestAnimationFrame(() => (title.style.opacity = '1'));
+    title.animate([{ transform: `scale(${cta.pop.scale})` }, { transform: 'scale(1)' }], {
+      duration: cta.pop.seconds * 1000,
+      easing: cta.pop.ease
+    });
+    this.ctaTitle = title;
+
     const { row, button } = this.choiceRow();
     icons.forEach((icon, i) => {
       const el = button(icon, () => this.finishAd());
 
-      // A down arrow over the button, in the same art the world arrows use. Staggered in, so
-      // the three of them arrive as a sequence rather than a block.
-      const arrow = document.createElement('img');
-      arrow.src = arrowSrc;
-      Object.assign(arrow.style, {
+      // An arrow over the button, staggered in so the three arrive as a sequence rather than a
+      // block. TWO elements: the outer one bobs, the inner one is turned over. arrow.png points
+      // UP — measured off its alpha, the tip is its top row and the shaft its bottom — so it
+      // needs the half turn to point AT the button, and keeping the turn off the animated
+      // element means translateY still means screen-down rather than down-in-a-rotated-frame.
+      const bob = document.createElement('span');
+      Object.assign(bob.style, {
         position: 'absolute',
+        display: 'block',
         bottom: `calc(100% + ${cta.arrow.gap * 100}%)`,
         left: `${50 - (cta.arrow.size * 100) / 2}%`,
         width: `${cta.arrow.size * 100}%`,
@@ -2583,9 +2852,40 @@ export class IslandScene {
         transition: `opacity ${cta.arrow.fade}s`,
         pointerEvents: 'none'
       } as CSSStyleDeclaration);
-      el.appendChild(arrow);
-      window.setTimeout(() => (arrow.style.opacity = '1'), i * cta.arrow.stagger * 1000);
-      arrow.animate(
+      const arrow = document.createElement('img');
+      arrow.src = arrowSrc;
+      Object.assign(arrow.style, {
+        display: 'block',
+        width: '100%',
+        transform: 'rotate(180deg)',
+        filter: cta.glow.arrow
+      } as CSSStyleDeclaration);
+      bob.appendChild(arrow);
+      el.appendChild(bob);
+      requestAnimationFrame(() => (bob.style.opacity = '1')); // with its button, not after it
+
+      el.animate([{ transform: `scale(${cta.pop.scale})` }, { transform: 'scale(1)' }], {
+        duration: cta.pop.seconds * 1000,
+        easing: cta.pop.ease
+      });
+
+      // ...and the button breathes under it. Offset by the same stagger as its arrow, so the
+      // three do not pulse in lockstep.
+      el.animate(
+        [
+          { boxShadow: cta.glow.button.dim },
+          { boxShadow: cta.glow.button.bright, offset: 0.5 },
+          { boxShadow: cta.glow.button.dim }
+        ],
+        {
+          duration: cta.glow.pulse * 1000,
+          iterations: Infinity,
+          delay: i * cta.arrow.stagger * 1000,
+          easing: 'ease-in-out'
+        }
+      );
+
+      bob.animate(
         [
           { transform: 'translateY(0)' },
           { transform: `translateY(${cta.arrow.bob * 100}%)`, offset: 0.5 },
@@ -2625,15 +2925,37 @@ export class IslandScene {
     row: HTMLDivElement;
     button: (icon: string, onTap: (el: HTMLElement) => void) => HTMLElement;
   } {
+    // The sizes live in CSS variables, swapped by an orientation media query, so a rotation
+    // re-lays the row out without a resize handler. Injected once per page.
+    if (!document.getElementById('island-choice-css')) {
+      const style = document.createElement('style');
+      style.id = 'island-choice-css';
+      style.textContent = `
+        .island-choice {
+          --choice-button: ${TOOL_CHOICE.button};
+          --choice-bottom: ${TOOL_CHOICE.bottom};
+          --choice-gap: ${TOOL_CHOICE.gap};
+        }
+        @media (orientation: landscape) {
+          .island-choice {
+            --choice-button: ${TOOL_CHOICE.landscape.button};
+            --choice-bottom: ${TOOL_CHOICE.landscape.bottom};
+            --choice-gap: ${TOOL_CHOICE.landscape.gap};
+          }
+        }`;
+      document.head.appendChild(style);
+    }
+
     const row = document.createElement('div');
+    row.className = 'island-choice';
     Object.assign(row.style, {
       position: 'absolute',
       left: '0',
       right: '0',
-      bottom: TOOL_CHOICE.bottom,
+      bottom: 'var(--choice-bottom)',
       display: 'flex',
       justifyContent: 'center',
-      gap: TOOL_CHOICE.gap,
+      gap: 'var(--choice-gap)',
       pointerEvents: 'none', // only the buttons take taps; the rest of the row
       // is dead space over the canvas
       opacity: '0',
@@ -2650,8 +2972,8 @@ export class IslandScene {
       const el = document.createElement('button');
       Object.assign(el.style, {
         position: 'relative', // the hand is hung off the button it points at
-        width: TOOL_CHOICE.button,
-        height: TOOL_CHOICE.button,
+        width: 'var(--choice-button)',
+        height: 'var(--choice-button)',
         padding: '0',
         border: 'none',
         borderRadius: TOOL_CHOICE.radius,
@@ -2710,6 +3032,22 @@ export class IslandScene {
 
   /** Fade the row out and drop it, once the choice has been made. */
   private clearToolChoice(): void {
+    // The dark layer goes with the row it was put up for. Faded on the same timing, so the
+    // world comes back as the buttons leave rather than snapping back behind them.
+    const title = this.ctaTitle;
+    if (title) {
+      this.ctaTitle = undefined;
+      title.style.opacity = '0';
+      window.setTimeout(() => title.remove(), TOOL_CHOICE.fade);
+    }
+
+    const shade = this.ctaShade;
+    if (shade) {
+      this.ctaShade = undefined;
+      shade.style.opacity = '0';
+      window.setTimeout(() => shade.remove(), EXPANSION.cta.dim.fade * 1000);
+    }
+
     const row = this.toolChoice;
     if (!row) return;
     this.toolChoice = undefined;
@@ -3020,16 +3358,33 @@ export class IslandScene {
     );
   }
 
+  /** Whichever box this screen wants. A plain box is already the answer. */
+  private resolveNeed(
+    want:
+      | { w: number; h: number }
+      | { portrait: { w: number; h: number }; landscape: { w: number; h: number } }
+  ): { w: number; h: number } {
+    if (!('portrait' in want)) return want;
+    return this.width > this.height ? want.landscape : want.portrait;
+  }
+
   /**
    * Ease the shot to a new place and zoom, then hand back. Every beat that
    * reframes goes through here, so they all move the same way.
+   *
+   * `want` may be one box or a portrait/landscape pair. A pair is REMEMBERED, so a rotation —
+   * during the move or long after it — re-resolves to the other box; a plain box clears that,
+   * because a beat framed off its own subjects has nothing orientation-specific to hold on to.
    */
   private moveCamera(
     to: THREE.Vector3,
-    need: { w: number; h: number },
+    want:
+      | { w: number; h: number }
+      | { portrait: { w: number; h: number }; landscape: { w: number; h: number } },
     ease: number,
     done?: () => void
   ): void {
+    this.needFor = 'portrait' in want ? want : undefined;
     const from = this.cameraTarget.clone();
     const fromNeed = { ...this.need };
 
@@ -3038,6 +3393,9 @@ export class IslandScene {
       elapsed += delta;
       const k = THREE.MathUtils.smoothstep(elapsed, 0, ease);
 
+      // Re-resolved every frame, not captured once: rotating the device mid-move has to bend
+      // the move towards the other orientation's box rather than finish on the old one.
+      const need = this.resolveNeed(want);
       this.cameraTarget.lerpVectors(from, to, k);
       this.need.w = THREE.MathUtils.lerp(fromNeed.w, need.w, k);
       this.need.h = THREE.MathUtils.lerp(fromNeed.h, need.h, k);
@@ -4281,64 +4639,11 @@ export class IslandScene {
       new THREE.Vector3(EXPANSION.centre.x, CAMERA_FOLLOW.aimHeight, EXPANSION.centre.z),
       EXPANSION.frame,
       EXPANSION.ease,
-      () => {
-        this.showArrows();
-        // ...and the three upgrades to choose from, a beat later so the world arrows land
-        // first and the eye is already on the village.
-        this.wait(EXPANSION.cta.delay, () => void this.showUpgradeChoice());
-      }
+      // The three upgrades to choose from. There were also arrows planted over the village
+      // itself, one per opportunity; they are gone — the ones on the buttons are what the
+      // player has to follow, and a second set in the world only competed with them.
+      () => this.wait(EXPANSION.cta.delay, () => void this.showUpgradeChoice())
     );
-  }
-
-  /**
-   * A down-arrow over each opportunity, arriving one after another and then bobbing
-   * for as long as the playable is up. They are UI: depth testing off and a high
-   * render order, so a roof can never swallow one.
-   *
-   * All four run off ONE effect. Four effects would do the same job, but this is the
-   * last thing on screen and it never ends — so it is also the one that keeps
-   * running while the endcard sits over it.
-   */
-  private showArrows(): void {
-    const arrow = EXPANSION.arrow;
-    const texture = new THREE.TextureLoader().load(arrowSrc);
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    const arrows = EXPANSION.arrows.map((offset, i) => {
-      const spot = villageAt(offset.at);
-      const material = new THREE.SpriteMaterial({
-        map: texture,
-        transparent: true,
-        opacity: 0,
-        depthTest: false,
-        depthWrite: false
-      });
-      const sprite = new THREE.Sprite(material);
-      // The arrows hang over props that are now EXPANSION.scale of their configured size,
-      // so both the sprite and how high it floats come down with them.
-      const size = arrow.size * EXPANSION.scale;
-      sprite.scale.setScalar(size);
-      sprite.renderOrder = 995;
-      // The art points DOWN with its tip at the bottom edge, so the sprite hangs
-      // half its own height above whatever the tip should be touching.
-      sprite.position.set(spot.x, offset.over * EXPANSION.scale + size / 2, spot.z);
-      this.scene.add(sprite);
-      return { sprite, material, baseY: sprite.position.y, delay: i * arrow.stagger };
-    });
-
-    let elapsed = 0;
-    this.effects.push((delta: number) => {
-      elapsed += delta;
-      arrows.forEach((a, i) => {
-        const live = elapsed - a.delay;
-        if (live <= 0) return;
-        a.material.opacity = Math.min(live / arrow.fade, 1);
-        // Each one bobs a third of a cycle out of step with the last, so the four
-        // of them do not pulse as one.
-        a.sprite.position.y = a.baseY + Math.sin(live * arrow.rate + i * 2.1) * arrow.bob;
-      });
-      return true; // they stay up for good
-    });
   }
 
   /** Off to the empty plots, down-screen and away from the felled stand. */
@@ -4960,9 +5265,12 @@ export class IslandScene {
 
     // The bubble art has to be decoded before it can be drawn into a canvas.
     // It is a data URI so this is quick, but the first line goes up early.
-    if (!this.bubbleImage) {
+    // Both the art and the FONT have to be there before a bubble can be drawn: it is baked
+    // into a canvas, which takes whatever font is loaded at that instant and cannot be
+    // re-flowed afterwards.
+    if (!this.bubbleImage || !this.fontReady) {
       this.effects.push(() => {
-        if (!this.bubbleImage) return true;
+        if (!this.bubbleImage || !this.fontReady) return true;
         this.showSpeech(speaker, text, hold);
         return false;
       });
@@ -5364,6 +5672,14 @@ export class IslandScene {
     this.width = width;
     this.height = height;
     this.renderer.setSize(width, height);
+    // A rotation changes WHICH box the beat wanted, not just how the frustum is derived from
+    // it. Snapped rather than eased: the screen has just flipped, so there is nothing to ease
+    // from. Beats framed off their own subjects have no pair and are unaffected.
+    if (this.needFor) {
+      const want = this.resolveNeed(this.needFor);
+      this.need.w = want.w;
+      this.need.h = want.h;
+    }
     this.updateCamera();
   }
 
@@ -5382,6 +5698,9 @@ export class IslandScene {
     this.running = false;
     cancelAnimationFrame(this.rafId);
     this.toolChoice?.remove();
+    this.ctaShade?.remove();
+    this.brand?.remove();
+    this.ctaTitle?.remove();
     window.removeEventListener('pointerdown', this.onPointerDown, { capture: true });
     this.renderer.dispose();
     if (this.renderer.domElement.parentNode) {
