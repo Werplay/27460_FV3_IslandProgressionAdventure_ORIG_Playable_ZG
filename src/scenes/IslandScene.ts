@@ -131,7 +131,6 @@ import hammerSrc from 'assets/images/props/Hammer.png';
 import axeSrc from 'assets/images/props/Axe.png';
 import broomSrc from 'assets/images/props/broom.png';
 import woodSrc from 'assets/images/Wood.png';
-import bubbleSrc from 'assets/images/DialogueBox.png';
 import logoSrc from 'assets/images/Logo.png';
 import fontSrc from 'assets/fonts/MasalaPro-Bold.otf';
 
@@ -154,9 +153,10 @@ const FIT_RADIUS = 2.3; // world half-width kept in frame at the opening
 // which is exactly what used to be cropped.
 const FRAME_HEIGHT_RATIO = 0.62;
 
-// The tightest a shot may ever get, in half-width. The two characters stand 1.5 apart, so
-// this is their separation plus room for a speech bubble: it is the floor that stops a
-// content-measured frame from closing in on them while the camera is merely following.
+// The tightest a shot may ever get, in half-width. It is the floor that stops a
+// content-measured frame from closing in on the pair while the camera is merely following.
+// Left where it was when they stood 1.5 apart rather than pulled in with them: it is a
+// floor, and a shot that never reaches it costs nothing.
 const FRAME_MIN_WIDTH = 2.1;
 
 /**
@@ -172,10 +172,15 @@ const FRAME_MIN_WIDTH = 2.1;
  * Landscape gets its own pair, and its HEIGHT is the number that matters. A wide frame shows
  * far less ground up-screen for the same zoom — portrait holds 4.1 units of height at this
  * width, landscape only 1.6 — so asking for a small `h` there does not tighten the shot, it
- * crops the rubble arc off the bottom of it. 2.6 is what holds the whole arc, the pair and the
- * boat; the frame comes out 4.6 across, which is wider than portrait's and shows more shore.
+ * crops the rubble arc off the bottom of it. 2.6 is what holds the whole arc and the pair;
+ * the frame comes out 4.6 across, which is wider than portrait's and shows more shore.
  *
- * Neither `w` should go below about 1.6: the two of them stand 1.5 apart and one would start to
+ * What this will NOT stretch to is the boat: its masthead used to sit 2.93 units up-screen,
+ * past this 2.6, and raising `h` to clear it pulled the whole landscape shot back about an
+ * eighth. The boat was moved down-screen instead (see BOAT.x/z) — it is scenery, and moving
+ * the subject is cheaper than zooming out for it.
+ *
+ * Neither `w` should go below about 1.2: the two of them stand 1.07 apart and one would start to
  * clip. (FRAME_MIN_WIDTH is the floor for content-measured shots, not for this one.)
  */
 const OPENING_FRAME = {
@@ -211,8 +216,15 @@ const SAND_EDGE = ISLAND_HALF + 1; // outer edge of the beach skirt
 // x -10) only the stretch around z -8..-2 of that -X shore is on screen — move
 // z within that range to slide the boat along the beach.
 const BOAT = {
-  x: -(SAND_EDGE + 1.5), // just past the sand, floating off the -X beach
-  z: -3.5,
+  // Just past the sand, floating off the -X beach. x and z are moved TOGETHER because the
+  // view is yawed 45: an equal step in both is straight down the screen and leaves the boat
+  // exactly where it was left-to-right (see PAN's axis notes). It was (1.5, -3.5), which put
+  // the masthead 2.93 units up-screen from PAN and cut its top off in landscape, where the
+  // frame only holds 2.6; 0.65 down both axes brings the masthead to 2.50. That is 0.1 of
+  // air, and the bob adds about 0.03 of it. The hull stops 0.24 short of the sand edge, so
+  // there is no room to take another step this way — pull the frame instead.
+  x: -(SAND_EDGE + 0.85),
+  z: -2.85,
   yawDeg: 70, // swung with the camera, which moved from 65 to 45
   // Hull length in world units. The island is ISLAND_SIZE (25) across, so 2 puts
   // the boat at about a twelfth of the island's width. The camera frames
@@ -245,9 +257,11 @@ const BOAT_BOB = {
 // current camera only about x -12..-8, z -6..0 of this shore is on screen, so
 // keep them inside that and check the framing when you move them.
 //
-// yawDeg turns them on the spot. Both models are authored facing +Z and the
-// camera looks along (0.42, 0.91) in XZ, so 25 is square-on to the camera —
-// less turns them towards the sea, more towards the island.
+// yawDeg turns them on the spot, compass-style: heading h faces (sin h, cos h), the same
+// convention the rubble arc and the run are laid out in. Both stand facing RUBBLE.arcCentreDeg
+// (100) — the middle of the arc, where the rock they have to tap sits and where startRunning
+// sends them — so they are already looking at the thing the player is asked to tap. It is
+// hardcoded rather than read off RUBBLE, which is declared further down the file.
 //
 // height is sole-to-hat in world units. The boat's hull is BOAT.length (1.5)
 // long, and these two are authored in the same ~cm units as it (Merry measures
@@ -270,9 +284,9 @@ const CHARACTERS = [
     // her planted foot slides back 0.737 units over the 0.533s cycle, so this is
     // the speed at which the feet grip the ground instead of skating over it.
     runSpeed: 1.38,
-    x: -30.3,
-    z: -0.5,
-    yawDeg: 52, // was 72 at the old 65-degree camera; square-on is yaw + 7
+    x: -30.27,
+    z: -0.28,
+    yawDeg: 100, // RUBBLE.arcCentreDeg — see the note above
     height: 0.9
   },
   {
@@ -282,9 +296,9 @@ const CHARACTERS = [
     idle: { startFrame: 0, endFrame: 298 },
     run: { startFrame: 299, endFrame: 315 },
     runSpeed: 1.23, // 0.694 units of foot slide over his 0.567s cycle
-    x: -30.1,
-    z: 1,
-    yawDeg: 45, // ...and this one was 65
+    x: -30.13,
+    z: 0.78,
+    yawDeg: 100, // ...and the same, so the pair face it together
     height: 0.82
   }
 ];
@@ -326,8 +340,8 @@ const RUBBLE_BREAK = {
   // of the run. An even count has no exact middle, so this rounds to the nearer.
   index: Math.round((RUBBLE.count - 1) / 2),
   // How many rocks either side of it go with it. 1 = three rocks, which opens
-  // the arc to about 3.2u of clear ground: the pair runs through abreast 1.5u
-  // wide, and a single rock's 1.1u gap left one going through each of them.
+  // the arc to about 3.2u of clear ground: the pair runs through abreast about a
+  // unit wide, and a single rock's 1.1u gap left one going through each of them.
   spread: 1,
   // Tap target, as a multiple of the rock's own bounding sphere. A bare mesh hit
   // on something a world unit across is a fiddly target on a phone, so the
@@ -355,7 +369,12 @@ const RUBBLE_BREAK = {
 // the world above the breakable rock rather than a DOM or Phaser overlay, so it
 // tracks the rock through any resize without a line of layout code.
 const TAP_HINT = {
-  size: 0.95, // world units square. The rock is RUBBLE.size across, for scale
+  // Square, as a fraction of the frame's SHORTER side — the world "vmin", the same thing
+  // the DOM parts of this ad size themselves in. It used to be a flat 0.95 world units,
+  // which is a fixed size in the SCENE, not on the screen: landscape frames this ad twice
+  // as wide as portrait, so the hand came out half the size the moment the phone turned.
+  // 0.207 is what 0.95 worked out to on the portrait opening, so that view is unchanged.
+  screenSize: 0.207,
   offsetX: 0.1, // screen-RIGHT of the rock, world units
   offsetY: 0.05, // how far the FINGERTIP clears the top of the rock
   delay: 1.2, // seconds before it appears — the cloud intro is still clearing
@@ -618,7 +637,13 @@ const CROSSING = {
 // CROSSING.beyond past it, then walk FORWARD.distance further. So moving the
 // stream or the run moves this whole scene with it.
 const FORWARD = {
-  distance: 2, // world units off the end of the bridge
+  // World units off the end of the bridge — and THE knob for how far the whole cow beat sits
+  // from the crossing, since COW_STOP is measured from it and the cow, her trees and the shot
+  // all hang off COW_STOP. Was 2; 1.2 pulls the beat in so the bridge is still part of the
+  // picture when they free her. The far bank cannot take much less: they are already
+  // CROSSING.beyond (1.3) past the deck when this leg starts, and it is what turns the
+  // crossing into a walk up the bank rather than a stop at the end of the planks.
+  distance: 1.2,
   headingDeg: 90 // straight along +X, which is where the far bank opens up
 };
 
@@ -669,12 +694,14 @@ const COW = {
   walkSpeed: 0.75,
   runSpeed: 1.15, // a shade under a character's, so she trails rather than leads
   gaitRate: 2,
-  joinGap: 1.15, // how close she comes before settling
-  // ...and how far to one side of straight-behind-them she stands. At 0 her walk in from
-  // the pen clipped the nearer character by 0.45; 0.8 to the screen-right of the station
-  // opens that to 0.95 and still leaves her a cow's length off them.
-  joinSide: 0.8,
-  settle: 0.2, // ...and how much slack in that before she bothers to move again
+  // How close she comes before settling — measured straight to the pair's middle, so it IS the
+  // distance she stands at, on whichever side she happened to walk in from. It used to be a gap
+  // to an offset spot instead, and every offset compounds: one on her own side adds to the
+  // distance, one on their far side has her cross between them, which is the "she walks past
+  // them" this was. Under about 0.9 her head is inside the woman; much over 1.6 and the tighter
+  // farm frame starts cutting her off at the edge.
+  joinGap: 1.15,
+  settle: 0.15, // ...and how much slack in that before she bothers to move again
   chase: 2.2, // how far behind she has to fall before breaking into the run
   cheer: 1.1, // seconds of celebrating before she comes over
   blend: 0.25 // crossfade between her gaits
@@ -775,8 +802,17 @@ const FARM = {
   // close together. Every constraint is still met — nobody stands in the soil, neither lane
   // crosses it on the way, and the walk misses the cow at her station — see
   // scratchpad/tighten.mjs, which solves this and the barn's offsets together.
-  down: 4.25,
-  right: -2,
+  // Moved out from 4.25 / -2 to clear the STREAM. The barn hangs off this field (BARN.down
+  // and .right are measured from it), the field hangs off COW_STOP, and COW_STOP came 0.8
+  // closer to the water when FORWARD.distance was cut — which walked the barn's screen-left
+  // corner into the channel. Both numbers are raised TOGETHER by 0.735 because down and right
+  // are 45 apart: an equal step along each is 1.04 units of pure +X, straight away from the
+  // water, with no sideways drift. That leaves the barn standing 0.5 clear of the bank (its
+  // footprint is 1.82 x 1.32 at BARN.height, the channel's far edge is x -23.41) and costs
+  // 0.44 of extra walk from the cow. Everything the barn was solved against is measured from
+  // the FIELD, so moving them together leaves all of it intact.
+  down: 4.985,
+  right: -1.265,
   // How far short of the field's middle they pull up, so they stand at the edge
   // of the soil rather than in it. 2.5 rather than the ~1.7 the beds actually
   // measure: the walk now comes in DIAGONALLY across a field squared to the world
@@ -834,14 +870,25 @@ const BARN = {
   down: -2.75,
   right: -3.5,
   ahead: 2.8, // how far short of it they pull up
-  // Height in world units: 2.3x a character, which is what a barn should be next
-  // to the people using it.
-  height: 2.1,
+  // Height in world units — but it is the BOUNDING BOX that gets scaled to it, not the
+  // building, and for this model those are very different things. Barn.glb carries a
+  // weathervane needle 0.007 across that runs from 80.5% of its box to the very top, and
+  // its roof ridge sits at only 65.0%; the wreck's box is solid to 100% of its own. So at
+  // 2.1 the repaired barn's ridge landed at 1.37 against the wreck's 1.60 and its footprint
+  // at 1.82 x 1.32 against 1.86 x 1.76 — the repair handed back something SHORTER and 27%
+  // smaller than the thing it replaced, which is the beat backwards.
+  // 2.8 of box puts the ridge at 1.82, the cupola at 2.25 and 1.76 x 2.42 on the ground:
+  // 30% more footprint than the wreck and a silhouette that tops it by 0.65.
+  // The ceiling is the STREAM, not the frame — at 2.8 the barn's screen-left corner stands
+  // 0.28 off the channel's far edge (x -23.41), which is the same standoff the wreck has
+  // been sitting at all along, so nothing comes nearer the water than what is already there.
+  height: 2.8,
   // ...and the wreck it replaces, kept LOWER on purpose. Half of it is down, so
   // it should not stand as tall as the barn it becomes — and the difference is
   // what makes the repair read as the building coming back up rather than as one
-  // prop blinking into another. 1.6 rather than 1.8 because righting it (below)
-  // made it the WIDER of the two, and at 1.8 the beat no longer fits the frame.
+  // prop blinking into another. 1.6 rather than 1.8 because righting it (below) spreads it
+  // to 1.86 x 1.76 on the ground, and at 1.8 the beat no longer fits the frame. Unlike the
+  // barn's, this box is solid to the top: 1.6 here is 1.6 of actual wreck.
   brokenHeight: 1.6,
   // B_Barn_Abandoned is authored Z-UP inside a Y-up file, so it arrives lying on
   // its back — the same mistake the wheat and the cow's walk carry. Verified off
@@ -851,12 +898,14 @@ const BARN = {
   // to 0 if the FBX is ever re-exported the right way up; the barn it becomes is
   // already Y-up and takes 0.
   brokenUprightDeg: -90,
-  // Widest horizontal against height, of the WIDER of the two. That is the wreck,
-  // and only once righted: standing up it measures 6.3 across on 5.4 of height,
-  // against the barn's slimmer 17.6 on 20.4. The scenery scatter needs this BEFORE
-  // either model has loaded — it settles every position up front — so it cannot be
+  // Widest horizontal against height, of the WIDER of the two, read against BARN.height.
+  // That used to be the righted wreck (6.3 across on 5.4 of height, 1.86 at brokenHeight);
+  // now that the barn stands at 2.8 it is the BARN, 17.6 across on 20.4 of box, which is
+  // 2.42. Holding the wreck's ratio here would have reserved 2.43 of ground where 2.01 is
+  // wanted and shoved the scatter off the barn's setting. The scenery scatter needs this
+  // BEFORE either model has loaded — it settles every position up front — so it cannot be
   // measured at load time the way scale is.
-  spread: 6.3 / 5.4,
+  spread: 17.64 / 20.39,
   // Which way each of them faces, and they are SEPARATE numbers on purpose: the wreck and
   // the barn are different models with different authored fronts, so one yaw that presents
   // the barn's long side to the camera leaves the wreck showing its back — and the two are
@@ -1528,48 +1577,54 @@ function screenReachPerHeight(): number {
 
 // What the characters tell the player to do, and how it is drawn.
 //
-// The bubble is one 197x155 PNG with its tail on the LEFT, so it hangs off the
-// speaker's right shoulder and the tail points back at whoever is talking. The
-// words are drawn INTO it on a canvas rather than laid over it as a second
-// sprite: one texture, one draw, and the text cannot drift out of the bubble on
-// a different aspect ratio.
+// The box is pinned to the TOP of the screen rather than hung off the speaker: it used to
+// follow them at a fixed world size, so every time the camera pulled back for a wider beat
+// the words shrank with the scene and stopped being readable on a phone. Sized and placed
+// off the frustum instead, it is the same size on screen at every zoom.
 //
-// Each line is spoken by the other character — SPEECH_LINES is read in order and
-// say() alternates the speaker every time it is called.
+// The box itself is DRAWN — a rounded rect with the words baked into the same canvas, one
+// texture and one draw. It replaced DialogueBox.png, whose tail pointed at a speaker the box
+// no longer hangs off; cropping the tail out of the art left a seam in its drop shadow, and
+// a rounded rect is four lines of canvas either way.
 const SPEECH = {
-  // World units across. DialogueBox.png is 317x130, so this comes out 0.47 tall.
-  width: 1.15,
-  // How much of the art's own height to keep. The old round blob stood as tall as the
-  // character saying it and had to be squashed to 0.68 with the text counter-stretched;
-  // DialogueBox.png is already a wide, shallow box, so it is used as authored.
-  squash: 1,
-  // The box is hung by its TAIL, not by its middle: the tip is parked just off the speaker's
-  // face and everything else is placed from there, so it reads as coming out of their mouth
-  // whatever size the art is. Measured off DialogueBox.png's alpha — the tail tapers to
-  // x 30..37 at y 117 of 317x130, so its tip is (33, 117), and y here is from the BOTTOM.
-  tail: { x: 0.104, y: 0.1 },
-  // Where that tip lands on the speaker. Height is a fraction of THEIRS, so it holds for
-  // both characters despite one being shorter: 0.80 is about mouth level (their eyes sit at
-  // 0.79 of their height, the top of the head at 1.0). Anchoring at 1.0 put the bubble over
-  // their head like a thought balloon.
-  faceHeight: 0.8,
-  faceGap: 0.15, // out past the cheek, so it sits BESIDE the face, not over it
-  margin: 0.1, // world units of clearance the box keeps from the frame's edge
-  fade: 0.25,
-  // Body of the box in texture space, top-down, inset from the art for a margin. The panel
-  // itself runs x 0.019..0.972 and y 0..0.79 (the rest is the tail).
-  body: { x: 0.07, y: 0.1, width: 0.86, height: 0.6 },
+  // Across, as a fraction of the frame's SHORTER side (see frameMin) — this is what keeps it
+  // constant on screen. Against the width it would have been a 56%-wide banner in portrait
+  // and the same 56% of a twice-as-wide landscape frame, i.e. a different box per rotation.
+  screenWidth: 0.56,
+  // ...but the same box on a LANDSCAPE frame is a different thing again: that frame is half
+  // as tall as portrait's in world units, so a vmin-sized box eats a fifth of the screen's
+  // height. Landscape gets its own, smaller one. It stays CENTRED — an off-centre box reads
+  // as a mistake — and what keeps it off the boat behind it is that it does not linger: see
+  // pop, and `hold` at every call site.
+  landscapeWidth: 0.38,
+  // Gap above it, as a fraction of the frame's half-height. Not flush to the top: "moved
+  // down a bit" reads as deliberate placement rather than as something jammed into the edge.
+  topGap: 0.22,
+  // Seconds a line stays up when the caller does not say. It used to be "until something
+  // replaces it", which on the instruction lines meant the box sat over the shot for as long
+  // as the player took to tap. The pointing hand is still there asking, so the words can say
+  // their piece and get out of the way.
+  hold: 1.5,
+  // Seconds to spring open, and to shrink away again. The box scales from nothing on an
+  // easeOutBack, so it LANDS instead of merely appearing — and, more to the point, it is
+  // visibly a thing that comes and goes rather than a panel bolted over the shot.
+  pop: 0.26,
+  // The box in canvas pixels. Only the RATIO reaches the screen — screenWidth decides how
+  // big it actually lands — so these are set big enough that the text stays crisp.
+  box: { width: 640, height: 200, radius: 46 },
+  // Kept clear of text on every side, as a fraction of the box.
+  padding: { x: 0.08, y: 0.12 },
+  fill: '#fef9da', // the cream the old art was painted in
+  shadow: { colour: 'rgba(87,35,48,0.28)', blur: 20, drop: 10 },
   colour: '#6b5636',
-  // Starting size, in the art's own pixels. The text is MEASURED and shrunk
-  // until it fits the body — a fixed size is a guess that breaks the moment
-  // anyone edits a line, and every one of the three below overran the bubble at
-  // the size that looked right on paper.
-  fontSize: 34,
+  // Starting size, in those same box pixels. The text is MEASURED and shrunk until it fits —
+  // a fixed size is a guess that breaks the moment anyone edits a line.
+  fontSize: 68,
   fontStack: FONT.stack,
   lineSpacing: 1.15
 };
 
-// Read in order, alternating speaker. Short enough to take in at a glance —
+// Read in order. Short enough to take in at a glance —
 // this is an instruction, not dialogue.
 const SPEECH_LINES = {
   tool: 'Pick a tool!', // both obstacles ask it, so both say it
@@ -1992,9 +2047,7 @@ export class IslandScene {
     speed: number;
     height: number; // where a speech bubble has to clear
   }> = [];
-  private speech?: THREE.Sprite; // only ever one, and it follows its speaker
-  private speaker = 0; // whose turn it is to talk; every line swaps it
-  private bubbleImage?: HTMLImageElement;
+  private speech?: THREE.Sprite; // only ever one, pinned to the top of the frame
   private finishing = false; // the end card is a one-way door — see finishAd
   private ctaShade?: HTMLElement; // the dark layer behind the call to action
   private brand?: HTMLElement; // the logo in the corner
@@ -2095,7 +2148,16 @@ export class IslandScene {
     Object.assign(this.renderer.domElement.style, {
       position: 'absolute',
       top: '0',
-      left: '0'
+      left: '0',
+      // HIDDEN until the overlay has the screen covered — see reveal().
+      //
+      // It keeps rendering behind that: the models go on loading and decoding and the first
+      // frames get drawn, which is what makes the hand-over instant. What it must not do is be
+      // SEEN while it does, and there is a window where it would be — Game starts this scene in
+      // its constructor and Phaser's overlay only boots a few hundred milliseconds later, longer
+      // on a phone. In that gap a device showed the island mid-load: black where its grass
+      // texture had not decoded yet.
+      visibility: 'hidden'
     } as CSSStyleDeclaration);
     document.body.appendChild(this.renderer.domElement);
 
@@ -2105,14 +2167,6 @@ export class IslandScene {
     // Both UI sprites are authored in sRGB like every other texture here.
     this.pointerTexture.colorSpace = THREE.SRGBColorSpace;
     this.woodTexture.colorSpace = THREE.SRGBColorSpace;
-
-    // Decoded up front because the speech bubble is drawn INTO a canvas rather
-    // than used as a texture directly, and a canvas needs a decoded image.
-    const bubble = new Image();
-    bubble.onload = () => {
-      this.bubbleImage = bubble;
-    };
-    bubble.src = bubbleSrc;
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, CAM_NEAR, CAM_FAR);
     // cameraTarget starts at PAN and only moves if the runners drag it along.
@@ -2602,6 +2656,15 @@ export class IslandScene {
     this.need.h *= INTRO_ZOOM.from;
     this.updateCamera();
     this.moveCamera(this.cameraTarget.clone(), OPENING_FRAME, INTRO_ZOOM.ease);
+  }
+
+  /**
+   * Show the canvas. Called when the overlay has the screen covered, so whatever state the scene
+   * is in at that moment is hidden behind fog rather than on display. Idempotent: several things
+   * may reasonably decide the world should be visible by now.
+   */
+  public reveal(): void {
+    this.renderer.domElement.style.visibility = 'visible';
   }
 
   public begin(): void {
@@ -3142,7 +3205,6 @@ export class IslandScene {
         depthWrite: false
       })
     );
-    sprite.scale.setScalar(TAP_HINT.size);
     sprite.renderOrder = 999;
 
     // Screen-right comes off the camera's own X axis, since world X points
@@ -3151,15 +3213,15 @@ export class IslandScene {
     this.camera.updateMatrixWorld();
     const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
 
-    // The hand points UP with its fingertip at the top edge of the image, so
-    // the sprite hangs half its own height below wherever that tip should land
-    // — offsetY is the tip's clearance over the target, not the sprite's.
-    const base = new THREE.Vector3(
-      centre.x,
-      top + TAP_HINT.offsetY - TAP_HINT.size / 2,
-      centre.z
-    ).addScaledVector(right, TAP_HINT.offsetX);
-    sprite.position.copy(base);
+    // The hand points UP with its fingertip at the top edge of the image, so the sprite hangs
+    // half its own height below wherever that tip should land — offsetY is the tip's clearance
+    // over the target, not the sprite's. The height is re-derived every frame (the hand is
+    // sized off the frame, which moves), so this holds only the part that never changes.
+    const base = new THREE.Vector3(centre.x, top + TAP_HINT.offsetY, centre.z).addScaledVector(
+      right,
+      TAP_HINT.offsetX
+    );
+    sprite.position.copy(base).setY(base.y - (this.frameMin() * TAP_HINT.screenSize) / 2);
 
     this.scene.add(sprite);
     this.tapHint = sprite;
@@ -3178,8 +3240,9 @@ export class IslandScene {
       const into = Math.min(beat, Math.abs(beat - TAP_HINT.gap));
       const press = into < TAP_HINT.press ? Math.sin((into / TAP_HINT.press) * Math.PI) : 0;
 
-      sprite.position.y = base.y - press * TAP_HINT.size * TAP_HINT.dip;
-      sprite.scale.setScalar(TAP_HINT.size * (1 - press * 0.08));
+      const size = this.frameMin() * TAP_HINT.screenSize;
+      sprite.position.y = base.y - size / 2 - press * size * TAP_HINT.dip;
+      sprite.scale.setScalar(size * (1 - press * 0.08));
 
       return this.tapHint === sprite; // dropped the moment the rock is tapped
     });
@@ -3535,9 +3598,43 @@ export class IslandScene {
     return { target, need: this.framing(subjects, margin, target) };
   }
 
-  /** Both characters, as framing subjects. */
+  /**
+   * Both characters, as framing subjects — and the cow once she is with them.
+   *
+   * She is in here rather than in each caller because from the rescue on she is one of the
+   * subjects, wherever they go: she holds her gap on whichever side she came in from, and a frame
+   * drawn round the pair alone cut her in half against the right edge of the farm shot.
+   */
   private pairSubjects(): Array<{ x: number; z: number; height: number }> {
-    return this.actions.map(({ pivot, height }) => ({ x: pivot.position.x, z: pivot.position.z, height }));
+    const subjects = this.actions.map(({ pivot, height }) => ({
+      x: pivot.position.x,
+      z: pivot.position.z,
+      height
+    }));
+    if (this.cow) {
+      const { position, rotation } = this.cow.pivot;
+      // Where she is HEADING for, not where she is: a frame is worked out the moment a beat
+      // starts, and she is often still coming — so her live position mid-walk would open the shot
+      // out to hold a cow who is about to be standing next to them anyway. Past her gap she
+      // counts as being at it, on the side she is coming from.
+      const mid = subjects.reduce((t, s) => ({ x: t.x + s.x / subjects.length, z: t.z + s.z / subjects.length }), { x: 0, z: 0 });
+      const out = new THREE.Vector2(position.x - mid.x, position.z - mid.z);
+      // joinGap plus its slack, because that slack is where she actually comes to rest whenever
+      // the pair were still moving as she closed — which is every time.
+      out.setLength(Math.min(out.length(), COW.joinGap + COW.settle));
+      // And both ENDS of her, not one point: the others are people, near enough a point on the
+      // ground, while she is a cow's length long — framed as a point her rump hung over the edge
+      // of the shot. Which way that length lies is wherever she last walked.
+      const reach = COW.length / 2;
+      [reach, -reach].forEach((along) =>
+        subjects.push({
+          x: mid.x + out.x + Math.sin(rotation.y) * along,
+          z: mid.z + out.y + Math.cos(rotation.y) * along,
+          height: COW.height
+        })
+      );
+    }
+    return subjects;
   }
 
   /**
@@ -3934,46 +4031,51 @@ export class IslandScene {
   }
 
   /**
-   * The cow, once she is free: she holds station a cow's length UP-SCREEN of the
-   * pair, walking to close a small gap and running to close a big one, for the
-   * rest of the scene. So she comes over when they are standing about, and she
-   * follows them to the farmland without being told to.
+   * The cow, once she is free: she keeps a cow's length off the pair for the rest
+   * of the scene, walking to close a small gap and running to close a big one. So
+   * she comes over when they are standing about, and she follows them to the
+   * farmland without being told to.
    *
-   * Up-screen is not cosmetic. The walk to the farmland sets off down-screen and
-   * to the right, so a cow holding station anywhere on THAT side of them stands in
-   * the road — and since she only ever closes a gap and never yields, the pair
-   * would walk straight through her. Behind is the one place a follower can wait.
+   * She aims at the pair themselves and holds joinGap off them, rather than at a
+   * spot offset from them: since she only ever closes a gap and never yields, an
+   * offset on their far side has her walk between the two of them to reach it and
+   * pull up beyond — which is what "she walks past them" was — and one on her own
+   * side just adds itself to the distance and parks her out at the frame edge.
+   * Where she ends up is therefore whichever side she came in from, and the gap is
+   * the one number that decides how close that is.
    *
-   * The station is recomputed every frame off wherever the pair currently is,
-   * which is why one effect covers both the joining and the following, and why it
-   * never needs to know which leg of the sequence is running.
+   * The target is recomputed every frame off wherever the pair currently is, which
+   * is why one effect covers both the joining and the following, and why it never
+   * needs to know which leg of the sequence is running.
    */
   private followPair(cue = true): void {
     const cow = this.cow;
     if (!cow) return;
 
-    const { down, right } = screenAxes();
-    const station = new THREE.Vector3();
+    const middle = new THREE.Vector3();
     // A skip has already put the pair where the cue would have sent them, so it
     // starts as though she had long since arrived.
     let joined = !cue;
 
     this.effects.push((delta: number) => {
-      station.set(0, 0, 0);
-      this.actions.forEach(({ pivot }) => station.add(pivot.position));
-      station.divideScalar(Math.max(this.actions.length, 1));
-      station.x += -down.x * COW.joinGap + right.x * COW.joinSide;
-      station.z += -down.z * COW.joinGap + right.z * COW.joinSide;
+      // Where the two of them are, which is what she walks at — see the note above for why it is
+      // not a spot offset from them.
+      middle.set(0, 0, 0);
+      this.actions.forEach(({ pivot }) => middle.add(pivot.position));
+      middle.divideScalar(Math.max(this.actions.length, 1));
 
-      const toward = station.clone().sub(cow.pivot.position).setY(0);
-      const gap = toward.length();
-      const gait = gap > COW.chase ? 'run' : gap > COW.settle ? 'walk' : 'idle';
+      const toward = middle.clone().sub(cow.pivot.position).setY(0);
+      // What is left to close, not how far off she is: at the gap she keeps this is 0, and it is
+      // what both the gait and the step below are measured against.
+      const close = toward.length() - COW.joinGap;
+      const gait = close > COW.chase ? 'run' : close > COW.settle ? 'walk' : 'idle';
       this.setCowGait(gait);
 
       if (gait !== 'idle') {
         const speed = gait === 'run' ? COW.runSpeed : COW.walkSpeed;
         toward.normalize();
-        cow.pivot.position.addScaledVector(toward, Math.min(speed * delta, gap));
+        // Clamped to `close`, so a fast frame cannot carry her past the gap she is meant to keep.
+        cow.pivot.position.addScaledVector(toward, Math.min(speed * delta, close));
         // Face the way she is going, models here being authored towards +Z.
         cow.pivot.rotation.y = Math.atan2(toward.x, toward.z);
       } else if (!joined) {
@@ -5325,130 +5427,82 @@ export class IslandScene {
 
 
   /**
-   * Put a line above the next character's head, telling the player what to do.
-   * The speaker alternates on every call, so the two of them take turns.
+   * Put a line across the top of the screen, telling the player what to do.
    *
    * @param hold seconds to stay up; 0 leaves it until the next line replaces it
    */
-  private say(text: string, hold = 0): void {
-    if (!this.actions.length) return;
-
-    const speaker = this.actions[this.speaker % this.actions.length];
-    this.speaker++;
-
-    // The bubble art has to be decoded before it can be drawn into a canvas.
-    // It is a data URI so this is quick, but the first line goes up early.
-    // Both the art and the FONT have to be there before a bubble can be drawn: it is baked
-    // into a canvas, which takes whatever font is loaded at that instant and cannot be
-    // re-flowed afterwards.
-    if (!this.bubbleImage || !this.fontReady) {
+  private say(text: string, hold = SPEECH.hold): void {
+    // The FONT has to be there before a bubble can be drawn: it is baked into a canvas,
+    // which takes whatever font is loaded at that instant and cannot be re-flowed
+    // afterwards. The first line goes up early enough for this to matter.
+    if (!this.fontReady) {
       this.effects.push(() => {
-        if (!this.bubbleImage || !this.fontReady) return true;
-        this.showSpeech(speaker, text, hold);
+        if (!this.fontReady) return true;
+        this.showSpeech(text, hold);
         return false;
       });
       return;
     }
 
-    this.showSpeech(speaker, text, hold);
+    this.showSpeech(text, hold);
   }
 
-  /** Draw the line into the bubble and hang it off the speaker. */
-  private showSpeech(
-    speaker: IslandScene['actions'][number],
-    text: string,
-    hold: number
-  ): void {
-    const image = this.bubbleImage;
-    if (!image) return;
-
+  /** Draw the line into the bubble and pin it across the top of the frame. */
+  private showSpeech(text: string, hold: number): void {
     this.hideSpeech(); // one at a time
 
-    // WHICH SIDE it hangs on. Two things decide it, in this order:
-    //
-    //  1. it must be ON SCREEN. The box is 1.15 units wide against a frame that can be as
-    //     narrow as 4.2, so a box hung off the wrong side of a character standing near the
-    //     edge runs straight out of frame — and the tail has to stay on the speaker, so
-    //     sliding the box back in is not an option. Choosing the side IS the fix.
-    //  2. failing a tie, away from the other character: the pair stand close and the speaker
-    //     alternates, so a fixed side covered the other one on every other line.
+    // The box is placed along the CAMERA's axes rather than the world's: a sprite always
+    // faces the camera, and the shot is isometric, so world up would slide it off the top
+    // of the frame. The orientation never changes, so these are taken once.
     this.camera.updateMatrixWorld();
-    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
     const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
-    const boxHeight = (SPEECH.width * image.height * SPEECH.squash) / image.width;
-    const other = this.actions.find((entry) => entry !== speaker);
-    const away =
-      other &&
-      new THREE.Vector3().subVectors(speaker.pivot.position, other.pivot.position).dot(right) < 0
-        ? -1
-        : 1;
 
-    // How far off the frame's edge each side would put the box, in world units along the
-    // camera's right. The frustum is orthographic, so its half-width IS a world distance.
-    const halfFrame = (this.camera.right - this.camera.left) / 2;
-    const overflow = (candidate: number): number => {
-      const tail = candidate < 0 ? 1 - SPEECH.tail.x : SPEECH.tail.x;
-      const middle = new THREE.Vector3()
-        .copy(speaker.pivot.position)
-        .addScaledVector(right, SPEECH.faceGap * candidate + (0.5 - tail) * SPEECH.width);
-      // where that middle sits across the frame, measured from the camera's own axis
-      const across = middle.clone().sub(this.cameraTarget).dot(right);
-      return Math.max(0, Math.abs(across) + SPEECH.width / 2 - halfFrame + SPEECH.margin);
-    };
-    const side = overflow(away) <= overflow(-away) ? away : -away;
-
-    // Drawn at twice the art's size so the words stay crisp — the bubble is
-    // only 197px wide but covers a good part of a phone screen.
-    const scale = 2;
+    // The canvas is the box plus room for its shadow to spread, so the blur is not clipped
+    // at the edges. The box is centred in it; the shadow is offset DOWN inside that margin.
+    const { width: boxW, height: boxH, radius } = SPEECH.box;
+    const bleed = SPEECH.shadow.blur + SPEECH.shadow.drop;
     const canvas = document.createElement('canvas');
-    canvas.width = image.width * scale;
-    canvas.height = image.height * scale;
+    canvas.width = boxW + bleed * 2;
+    canvas.height = boxH + bleed * 2;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    if (side < 0) {
-      // Flipped so the tail still points AT the speaker from the other side. Only the art is
-      // flipped — the text is drawn after this, unmirrored.
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-    }
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    ctx.fillStyle = SPEECH.fill;
+    ctx.shadowColor = SPEECH.shadow.colour;
+    ctx.shadowBlur = SPEECH.shadow.blur;
+    ctx.shadowOffsetY = SPEECH.shadow.drop;
+    ctx.beginPath();
+    ctx.roundRect(bleed, bleed, boxW, boxH, radius);
+    ctx.fill();
+    ctx.shadowColor = 'transparent'; // the words are flat on the box, not floating over it
 
     ctx.fillStyle = SPEECH.colour;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // Shrink until the longest line clears the body. The body is only ~79% of
-    // the art's width, so a line set by eye overruns the bubble's edge easily.
-    // Height is measured against the PRE-STRETCHED block, since the drawing
-    // below is 1/squash taller than the font size before the sprite squashes it
-    // back.
+    // Shrink until the longest line clears the padding. A size set by eye breaks the moment
+    // anyone edits a line — every one of the lines below overran the box at the size that
+    // looked right on paper.
     const lines = text.split('\n');
-    const maxWidth = SPEECH.body.width * canvas.width;
-    const maxHeight = SPEECH.body.height * canvas.height;
-    let size = SPEECH.fontSize * scale;
+    const maxWidth = boxW * (1 - SPEECH.padding.x * 2);
+    const maxHeight = boxH * (1 - SPEECH.padding.y * 2);
+    let size = SPEECH.fontSize;
     while (size > 8) {
       ctx.font = `bold ${size}px ${SPEECH.fontStack}`;
       const widest = Math.max(...lines.map((line) => ctx.measureText(line).width));
-      const tall = (lines.length * size * SPEECH.lineSpacing) / SPEECH.squash;
-      if (widest <= maxWidth && tall <= maxHeight) break;
+      if (widest <= maxWidth && lines.length * size * SPEECH.lineSpacing <= maxHeight) break;
       size -= 1;
     }
 
-    // Drawn stretched by exactly the amount the sprite is about to squash, so
-    // the letters land unsquashed on screen.
-    const bodyX = side < 0 ? 1 - SPEECH.body.x - SPEECH.body.width : SPEECH.body.x;
-    const midX = (bodyX + SPEECH.body.width / 2) * canvas.width;
-    const midY = (SPEECH.body.y + SPEECH.body.height / 2) * canvas.height;
     const step = size * SPEECH.lineSpacing;
-    ctx.save();
-    ctx.translate(midX, midY);
-    ctx.scale(1, 1 / SPEECH.squash);
     lines.forEach((line, i) => {
-      ctx.fillText(line, 0, (i - (lines.length - 1) / 2) * step);
+      ctx.fillText(
+        line,
+        canvas.width / 2,
+        bleed + boxH / 2 + (i - (lines.length - 1) / 2) * step
+      );
     });
-    ctx.restore();
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -5462,48 +5516,45 @@ export class IslandScene {
     });
     const sprite = new THREE.Sprite(material);
     sprite.renderOrder = 996; // under the pointing hand, over everything else
-    // The squash lives here, on the sprite, which is why the text had to be
-    // drawn pre-stretched above.
-    const height = boxHeight;
-    sprite.scale.set(SPEECH.width, height, 1);
     this.scene.add(sprite);
     this.speech = sprite;
 
-    // From the tail tip to the middle of the sprite. The tip goes on the speaker; this puts
-    // everything else where it belongs relative to it. `right` and `up` come off the CAMERA's
-    // matrix rather than the world's (see above, where side is worked out): a sprite always
-    // faces the camera, and world up would slide the box off the speaker's head as it rose.
-    //
-    // The tail mirrors with the art, which is what swings the box to the other side.
-    const tailX = side < 0 ? 1 - SPEECH.tail.x : SPEECH.tail.x;
-    const fromTail = new THREE.Vector3()
-      .addScaledVector(right, (0.5 - tailX) * SPEECH.width)
-      .addScaledVector(up, (0.5 - SPEECH.tail.y) * height);
-
     let elapsed = 0;
+    let open = 0; // how far the spring got before anything closed it
+    let shut = 0; // seconds into the shrink, once something has closed it
     let closing = false;
     this.effects.push((delta: number) => {
       elapsed += delta;
 
-      // Follow the speaker: they run, and the bubble goes with them. The tail
-      // tip sits beside their face and the bubble hangs off that, so it reads
-      // as speech coming out of them rather than a label over their head.
-      sprite.position
-        .copy(speaker.pivot.position)
-        .add(new THREE.Vector3(0, speaker.height * SPEECH.faceHeight, 0))
-        .addScaledVector(right, SPEECH.faceGap * side)
-        .add(fromTail);
+      // Sized and placed off the FRUSTUM every frame, not once: the camera zooms and pans
+      // between beats, and anything measured in world units at spawn shrinks and drifts with
+      // it. The frustum is orthographic, so its half-extents ARE world distances, and
+      // cameraTarget is what the camera looks at — that point is the centre of the screen.
+      const halfH = (this.camera.top - this.camera.bottom) / 2;
+      const wide = this.width > this.height;
+      const width = this.frameMin() * (wide ? SPEECH.landscapeWidth : SPEECH.screenWidth);
+      const height = (width * canvas.height) / canvas.width;
 
       if (this.speech !== sprite) closing = true; // a newer line took over
       if (hold > 0 && elapsed > hold) closing = true;
 
-      if (!closing) {
-        material.opacity = Math.min(elapsed / SPEECH.fade, 1);
-        return true;
-      }
+      // Springs open, then shrinks away. `pop` scales the sprite about its own centre, which
+      // is why the position below is worked out from the full-size height: the box keeps its
+      // place on screen while it grows into it, instead of sliding up as it does. The shrink
+      // starts from whatever the spring had reached, so a line replaced before it finished
+      // opening closes from there rather than snapping out to full size first.
+      if (!closing) open = easeOutBack(Math.min(elapsed / SPEECH.pop, 1));
+      else shut += delta;
+      const pop = open * (closing ? 1 - Math.min(shut / SPEECH.pop, 1) : 1);
 
-      material.opacity -= delta / SPEECH.fade;
-      if (material.opacity > 0) return true;
+      // Fading with the same number, so the box cannot be caught half-drawn at full opacity.
+      material.opacity = Math.min(pop, 1);
+      sprite.scale.set(width * pop, height * pop, 1);
+      sprite.position
+        .copy(this.cameraTarget)
+        .addScaledVector(up, halfH - height / 2 - halfH * SPEECH.topGap);
+
+      if (pop > 0) return true;
 
       sprite.removeFromParent();
       material.dispose();
@@ -5704,6 +5755,17 @@ export class IslandScene {
    * whichever of the two the screen makes binding decides the zoom. Nothing the beat asked
    * for can be cropped on any aspect, portrait or landscape.
    */
+  /**
+   * The frame's shorter side in world units — the world's own "vmin", and what anything
+   * meant to hold its size ON SCREEN is measured in. The frustum is orthographic, so its
+   * extents ARE world distances. Sizing off the WIDTH instead is the trap: this ad frames
+   * landscape about twice as wide as portrait, so a width-relative thing doubles on a
+   * rotation and a fixed world size halves.
+   */
+  private frameMin(): number {
+    return Math.min(this.camera.right - this.camera.left, this.camera.top - this.camera.bottom);
+  }
+
   private updateCamera(): void {
     const aspect = this.width / this.height;
     const halfW = Math.max(this.need.w, this.need.h * aspect);

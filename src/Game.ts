@@ -10,6 +10,8 @@ import { resolveDebugStart, type DebugScene, type IslandStage } from './config/d
 /** Everything the coordinator needs from whichever 3D layer is active. */
 interface PlayableScene {
   resize(width: number, height: number): void;
+  /** Show the layer: the overlay has the screen covered, so it is safe to be looked at. */
+  reveal?(): void;
   /** The fog is about to part: push the camera in behind it. */
   introZoom?(): void;
   /** The overlay has finished: start whatever the player is meant to watch. */
@@ -111,14 +113,20 @@ export class Game {
     }
     this.island = scene;
     scene.resize(this.width, this.height);
-    // A debug start has no overlay to hand over, so the beat starts at once.
+    // A debug start has no overlay at all, so nothing else will ever show or start it.
+    scene.reveal?.();
     scene.begin?.();
     if (this.paused) scene.pause();
   }
 
   /** Called at full cloud coverage. The scene is already rendering underneath. */
+  /**
+   * Full coverage: the scene has been rendering all along, and now it can be SEEN. Until this
+   * point its canvas is hidden, so a half-loaded island cannot appear in the gap between this
+   * scene starting and the overlay booting.
+   */
   private revealScene(): void {
-    // Scene is started in the constructor; nothing to build here yet.
+    this.island?.reveal?.();
   }
 
   private get overlayScene(): OverlayScene | undefined {

@@ -11,7 +11,6 @@
 // with a few dozen soft blobs torn out of its leading edge reads as fog at any screen size, and
 // it costs nothing.
 import * as Phaser from 'phaser';
-import introSrc from 'assets/videos/intro.mp4';
 
 /**
  * The fog: how it is drawn, and how it moves.
@@ -51,6 +50,9 @@ const FOG = {
   cover: 1050, // ms until the screen is solid
   hold: 180, // ...held while the intro is swapped out behind it
   clear: 1100, // ...and to thin back out
+  // How long the fog sits there before clearing when there is NO video (WITH_VIDEO false). It is
+  // the only cover the scene's models get, so it is a load budget as much as a beat.
+  soloHold: 1400,
   // How far into that thinning the world is actually LEGIBLE, and so the moment anything meant
   // to ride the reveal (the camera push-in and its whoosh) should start. Not zero: the banks
   // hold for `hold`, their tweens are staggered by up to a quarter of `clear` on top, and the
@@ -67,6 +69,36 @@ const FOG = {
   lead: 800
 };
 
+/**
+ * CONCEPT SWITCH. Two openings:
+ *
+ *   true   the intro video plays, and the fog rolls in over its last second (FOG.lead).
+ *   false  no video at all: the screen starts ALREADY fogged and clears straight into the game.
+ *
+ * The second is the cheaper and faster of the two — it drops assets/videos/intro.mp4, 313 KB
+ * on disk and about 420 KB inlined, and puts the player in the game a good six seconds sooner.
+ * What it gives up is the loading cover: with the video there, the 3D scene had seven seconds to
+ * fetch and decode its models behind it. Fog-only has FOG.soloHold, so if a slow device shows a
+ * half-built island on the reveal, that number is the first thing to raise.
+ *
+ * With this false, delete the intro.mp4 import below as well — an unused asset import may still
+ * be inlined, and the saving is the whole point.
+ */
+const WITH_VIDEO = false;
+
+/**
+ * The clip's data URI — and the ONE LINE that decides whether the ad carries it.
+ *
+ * This is a manual toggle on purpose. Neither an unused `import` nor a require behind a
+ * literal-false branch gets dropped: both leave `data:video/mp4;base64,...` in the built file
+ * (checked — flipping WITH_VIDEO alone moved the build by 600 bytes out of 6.4 MB). So with
+ * WITH_VIDEO false, comment the require out as well and the 420 KB actually goes.
+ *
+ *   WITH_VIDEO true  ->  const introSrc: string = require('assets/videos/intro.mp4');
+ *   WITH_VIDEO false ->  const introSrc = '';
+ */
+const introSrc = '';
+
 const VIDEO_W = 1080; // intro.mp4 is 1080x1080 (fallback for cover-fit)
 const VIDEO_H = 1080;
 
@@ -79,7 +111,23 @@ interface OverlayHooks {
 export class OverlayScene extends Phaser.Scene {
   private hooks!: OverlayHooks;
   private video?: Phaser.GameObjects.Video;
-  private fog: Phaser.GameObjects.Image[] = [];
+  /**
+   * Each piece of fog with what re-placing it needs. Kept because the fog HAS to survive a
+   * resize: on the fog-only opening it is on screen from the first frame, and a playable's
+   * viewport routinely changes size in those first moments — the SDK's boot size is not always
+   * the final one. Sized for the wrong screen, the banks leave the rest of it uncovered, which
+   * on a device showed as the game behind big black gaps.
+   */
+  private fog: Array<{
+    image: Phaser.GameObjects.Image;
+    role: 'bank' | 'puff';
+    side: number; // banks: which edge it came from
+    depth: number; // banks: which layer
+    fx: number; // puffs: position as a fraction of the screen
+    fy: number;
+    grown: number; // puffs: its settled scale
+  }> = [];
+  private fogPhase: 'none' | 'cover' | 'clear' = 'none';
   private skip?: Phaser.GameObjects.Text;
   private wiping = false;
 
@@ -91,8 +139,13 @@ export class OverlayScene extends Phaser.Scene {
     this.hooks = this.registry.get('hooks') as OverlayHooks;
 
     this.drawFog();
-    this.createVideo();
-    this.createSkip();
+    if (WITH_VIDEO) {
+      this.createVideo();
+      this.createSkip();
+    } else {
+      // Opens on solid fog and clears into the game — no video, nothing to skip.
+      this.startWipe(true);
+    }
 
     this.scale.on('resize', this.layout, this);
   }
@@ -164,9 +217,20 @@ export class OverlayScene extends Phaser.Scene {
   private drawFog(): void {
     if (this.textures.exists('fog')) return;
     const { width: w, height: h, solid, puffs, bite } = FOG.texture;
-    const canvas = this.textures.createCanvas('fog', w, h);
-    const ctx = canvas?.getContext();
-    if (!canvas || !ctx) return;
+    // Drawn into a canvas of MY OWN and handed over with addCanvas, rather than asking Phaser
+    // for one with createCanvas. createCanvas hands back null on any of several conditions and
+    // leaves nothing in the manager; an Image built against a missing key silently falls back to
+    // Phaser's __MISSING texture, which stretched over a full-screen quad is a black rectangle.
+    // That is what a device showed: the game visible at two corners, black across everything the
+    // fog was meant to cover. This way the canvas is definitely mine and definitely drawn.
+    const el = document.createElement('canvas');
+    el.width = w;
+    el.height = h;
+    const ctx = el.getContext('2d');
+    if (!ctx) {
+      console.error('Fog: no 2d context; the transition will be skipped.');
+      return;
+    }
 
     // The same hash the 3D scene uses, so the shape is fixed rather than different every run.
     const at = (i: number, salt: number) => {
@@ -203,28 +267,60 @@ export class OverlayScene extends Phaser.Scene {
       blob(x, h * at(i, 13), w * (0.05 + at(i, 17) * 0.09), 0.75);
     }
     ctx.globalCompositeOperation = 'source-over';
-    canvas.refresh();
+    this.textures.addCanvas('fog', el);
 
     // One soft blob on its own, for the puffs that bloom mid-screen.
-    const puff = this.textures.createCanvas('fogPuff', 256, 256);
-    const pctx = puff?.getContext();
-    if (!puff || !pctx) return;
+    const puffEl = document.createElement('canvas');
+    puffEl.width = 256;
+    puffEl.height = 256;
+    const pctx = puffEl.getContext('2d');
+    if (!pctx) return;
     const g = pctx.createRadialGradient(128, 128, 0, 128, 128, 128);
     g.addColorStop(0, 'rgba(255,255,255,1)');
     g.addColorStop(0.45, 'rgba(255,255,255,0.85)');
     g.addColorStop(1, 'rgba(255,255,255,0)');
     pctx.fillStyle = g;
     pctx.fillRect(0, 0, 256, 256);
-    puff.refresh();
+    this.textures.addCanvas('fogPuff', puffEl);
   }
 
-  /** Thicken the fog in, swap the intro out behind it, then let it thin back out. */
-  private startWipe(): void {
+  /**
+   * Is the fog actually usable? Both textures have to be present AND not Phaser's missing-texture
+   * placeholder, because that placeholder is what turns a failed transition into a black screen
+   * over a working game. If it is not usable the fog is skipped entirely: the ad opening with no
+   * transition is a small loss, opening behind a black rectangle is a dead ad.
+   */
+  private fogReady(): boolean {
+    const ok = ['fog', 'fogPuff'].every(
+      (key) => this.textures.exists(key) && this.textures.get(key).key !== '__MISSING'
+    );
+    if (!ok) console.error('Fog textures missing; going straight to the game.');
+    return ok;
+  }
+
+  /**
+   * Thicken the fog in, swap the intro out behind it, then let it thin back out.
+   *
+   * `alreadyThere` puts it at full cover on the first frame instead of rolling it in — the
+   * no-video opening. Same objects, same end state, same clearing: only the arrival is skipped,
+   * so the two concepts cannot drift apart.
+   */
+  private startWipe(alreadyThere = false): void {
     if (this.wiping) return;
     this.wiping = true;
 
     this.skip?.destroy();
     this.skip = undefined;
+
+    // No usable fog: hand over immediately rather than leaving a hole where the transition was.
+    if (!this.fogReady()) {
+      this.hooks.onCovered();
+      this.video?.destroy();
+      this.video = undefined;
+      this.hooks.onClearing();
+      this.hooks.onDone();
+      return;
+    }
 
     const { width, height } = this.scale.gameSize;
     const bankWidth = width * FOG.bank.width;
@@ -234,6 +330,7 @@ export class OverlayScene extends Phaser.Scene {
     };
 
     this.fog = [];
+    this.fogPhase = 'cover';
     // Every layer gets its OWN tween rather than one tween over all of them with per-index
     // values. That indexed form is what hid a sign error last time: the banks slid off their own
     // edges of the screen and, because a finished video stops rendering, the cut still "worked".
@@ -253,24 +350,26 @@ export class OverlayScene extends Phaser.Scene {
           // ...and the right bank is flipped VERTICALLY too: both share one texture, so
           // mirroring alone lined their torn edges up and left a seam down the middle.
           .setFlipY(side > 0);
-        this.fog.push(image);
+        this.fog.push({ image, role: 'bank', side, depth, fx: 0, fy: 0, grown: 1 });
         settle.push({ image, x: home });
 
-        // It arrives, swells and thickens at once, on its own clock.
-        const travel = FOG.cover * (1 - layer.lead * 0.35);
-        const delay = FOG.cover * layer.lead * 0.5;
-        last = Math.max(last, delay + travel);
-        this.tweens.add({
-          targets: image,
+        // Where it ends up, whether it is tweened there or simply put there.
+        const to = {
           x: home - side * bankWidth,
           y: image.y + height * layer.drift,
           alpha: layer.alpha,
           scaleX: image.scaleX * layer.grow,
-          scaleY: image.scaleY * layer.grow,
-          duration: travel,
-          delay,
-          ease: 'Sine.easeInOut'
-        });
+          scaleY: image.scaleY * layer.grow
+        };
+        if (alreadyThere) {
+          image.setPosition(to.x, to.y).setAlpha(to.alpha).setScale(to.scaleX, to.scaleY);
+        } else {
+          // It arrives, swells and thickens at once, on its own clock.
+          const travel = FOG.cover * (1 - layer.lead * 0.35);
+          const delay = FOG.cover * layer.lead * 0.5;
+          last = Math.max(last, delay + travel);
+          this.tweens.add({ targets: image, ...to, duration: travel, delay, ease: 'Sine.easeInOut' });
+        }
       });
     });
 
@@ -288,32 +387,47 @@ export class OverlayScene extends Phaser.Scene {
         .setScale(0.35)
         .setDepth(1.01)
         .setAngle(at(i, 27) * 360);
-      this.fog.push(puff);
+      this.fog.push({
+        image: puff,
+        role: 'puff',
+        side: 0,
+        depth: 0,
+        fx: puff.x / width,
+        fy: puff.y / height,
+        grown: FOG.bloom.grow * (0.85 + at(i, 31) * 0.3)
+      });
       settle.push({ image: puff, x: puff.x });
 
-      const delay = FOG.cover * 0.15 + at(i, 29) * FOG.cover * 0.5;
-      last = Math.max(last, delay + FOG.cover * 0.6);
-      this.tweens.add({
-        targets: puff,
-        alpha: FOG.bloom.alpha,
-        scale: FOG.bloom.grow * (0.85 + at(i, 31) * 0.3),
-        angle: puff.angle + (at(i, 33) - 0.5) * 40,
-        duration: FOG.cover * 0.6,
-        delay,
-        ease: 'Sine.easeOut'
-      });
+      const grown = FOG.bloom.grow * (0.85 + at(i, 31) * 0.3);
+      if (alreadyThere) {
+        puff.setAlpha(FOG.bloom.alpha).setScale(grown);
+      } else {
+        const delay = FOG.cover * 0.15 + at(i, 29) * FOG.cover * 0.5;
+        last = Math.max(last, delay + FOG.cover * 0.6);
+        this.tweens.add({
+          targets: puff,
+          alpha: FOG.bloom.alpha,
+          scale: grown,
+          angle: puff.angle + (at(i, 33) - 0.5) * 40,
+          duration: FOG.cover * 0.6,
+          delay,
+          ease: 'Sine.easeOut'
+        });
+      }
     }
 
     // Fired off a timer rather than a tween's onComplete: with a dozen tweens on their own
     // clocks, "covered" is when the LAST of them has landed.
     this.time.delayedCall(last, () => {
+      this.fogPhase = 'clear';
       this.hooks.onCovered();
       this.video?.destroy();
       this.video = undefined;
 
       let out = 0;
+      const hold = alreadyThere ? FOG.soloHold : FOG.hold;
       settle.forEach(({ image, x }, i) => {
-        const delay = FOG.hold + at(i, 37) * FOG.clear * 0.25;
+        const delay = hold + at(i, 37) * FOG.clear * 0.25;
         out = Math.max(out, delay + FOG.clear);
         this.tweens.add({
           targets: image,
@@ -326,11 +440,12 @@ export class OverlayScene extends Phaser.Scene {
         });
       });
 
-      this.time.delayedCall(FOG.reveal, () => this.hooks.onClearing());
+      this.time.delayedCall(hold + FOG.reveal, () => this.hooks.onClearing());
 
       this.time.delayedCall(out, () => {
-        this.fog.forEach((image) => image.destroy());
+        this.fog.forEach(({ image }) => image.destroy());
         this.fog = [];
+        this.fogPhase = 'none';
         this.hooks.onDone();
       });
     });
@@ -362,9 +477,40 @@ export class OverlayScene extends Phaser.Scene {
 
   private layout(): void {
     this.fitVideo();
-    // The fog is not re-fitted mid-wipe: its tweens are driving x, and a rotation during the
-    // second or two it is on screen would fight them. It is destroyed the moment it clears.
+    this.refitFog();
     if (this.skip) this.skip.setPosition(this.scale.gameSize.width - 16, 16);
+  }
+
+  /**
+   * Re-place the fog for the screen it is now on.
+   *
+   * Only while it is still COVERING: at that point every piece is meant to be at its end state,
+   * so it can simply be put there again at the new size — and covering is the phase where being
+   * wrong matters, because a gap shows the game through what is supposed to be solid. Once it is
+   * clearing it is a second from gone and its tweens own the positions; re-placing then would
+   * fight them for no gain.
+   */
+  private refitFog(): void {
+    if (this.fogPhase !== 'cover' || !this.fog.length) return;
+    const { width, height } = this.scale.gameSize;
+    const bankWidth = width * FOG.bank.width;
+
+    this.fog.forEach(({ image, role, side, depth, fx, fy, grown }) => {
+      if (role === 'bank') {
+        const layer = FOG.layers[depth];
+        const home = side < 0 ? 0 : width;
+        image.setDisplaySize(bankWidth * layer.scale, height * 1.02 * layer.scale);
+        image.setScale(image.scaleX * layer.grow, image.scaleY * layer.grow);
+        image.setPosition(
+          home - side * bankWidth,
+          height / 2 + depth * height * FOG.bank.stagger + height * layer.drift
+        );
+        return;
+      }
+      image.setDisplaySize(width * FOG.bloom.size, width * FOG.bloom.size);
+      image.setScale(grown);
+      image.setPosition(width * fx, height * fy);
+    });
   }
 
   // --- forwarded from the coordinator ---
