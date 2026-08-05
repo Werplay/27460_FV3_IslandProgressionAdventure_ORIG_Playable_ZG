@@ -1,6 +1,7 @@
 import { sdk } from '@smoud/playable-sdk';
 import * as Phaser from 'phaser';
 import { OverlayScene } from './overlay/OverlayScene';
+import { showEndCard } from './overlay/EndCard';
 import { IslandScene } from './scenes/IslandScene';
 import { resolveDebugStart, type DebugScene, type IslandStage } from './config/debugConfig';
 
@@ -19,6 +20,7 @@ export class Game {
   private height: number;
   private paused = false;
   private finished = false;
+  private endCard?: Phaser.Game;
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -109,6 +111,7 @@ export class Game {
     this.width = width;
     this.height = height;
     this.overlay?.scale.resize(width, height);
+    this.endCard?.scale.resize(width, height);
     this.island?.resize(width, height);
   }
 
@@ -128,9 +131,23 @@ export class Game {
     this.overlayScene?.setVolume(value);
   }
 
+  /**
+   * The ad is over: up goes the end card.
+   *
+   * This is the SDK's own `finish` event, so it covers both ways in — the player tapping an
+   * upgrade on the expansion beat (IslandScene calls sdk.finish) and the network ending the ad
+   * itself. The 3D layer is torn down a beat LATER, not here: the card fades in over about
+   * 450ms, and dropping the world first leaves a white flash under it.
+   */
   public finish(): void {
+    if (this.finished) return;
     this.finished = true;
-    this.overlay?.destroy(true);
-    this.island?.destroy();
+    this.overlay?.destroy(true); // the intro layer has done its job
+    this.overlay = undefined;
+    this.endCard = showEndCard(this.width, this.height);
+    window.setTimeout(() => {
+      this.island?.destroy();
+      this.island = undefined;
+    }, 1200);
   }
 }

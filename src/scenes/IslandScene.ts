@@ -3,6 +3,7 @@
 // is orthographic, the water reads as an even border on every side of the island
 // (no perspective horizon), which is the classic Hay Day / FarmVille map look.
 import * as THREE from 'three';
+import { sdk } from '@smoud/playable-sdk';
 import type { IslandStage } from '../config/debugConfig';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createIslandWater } from '../three/IslandWater.js';
@@ -842,6 +843,20 @@ const BARN = {
 // the farm, the barn and the pair. That solution is the numbers below; moving one
 // by hand is likely to break one of those five conditions, so re-run the search
 // (scratchpad/expansion-solve.mjs) rather than nudging.
+/**
+ * One prop in the village. `yawDeg` is a fixed facing, as the reference's own entries give it;
+ * `align` instead points the model's LONGEST side along a heading and works out the yaw from
+ * the geometry (see place), which is what the generated lots use.
+ */
+type VillageProp = {
+  key: string;
+  src: string;
+  at: { x: number; z: number };
+  size: number;
+  yawDeg: number;
+  align?: number;
+};
+
 const EXPANSION = {
   delay: 1.6, // seconds after the barn stands up before the shot starts pulling back
   // The island GROWS for this beat: 12.5 out to 19, so 25 units across becomes 38. A
@@ -911,16 +926,20 @@ const EXPANSION = {
     { src: roadSrc, at: { x: 14.5, z: -14 }, yawDeg: 180, length: 13, width: 1.15 },
     { src: roadSrc, at: { x: 14.5, z: -3 }, yawDeg: 180, length: 13, width: 1.15 },
     { src: roadCornerSrc, at: { x: 14.22, z: -21.2 }, yawDeg: 90, length: 1.8, width: null },
-    // The extension's main street, running at yaw 45 — the screen-vertical — in two
-    // lengths so it does not pave the core, plus the cross streets at 135.
-  { src: roadSrc, at: { x: -12.45, z: -46 }, yawDeg: 90, length: 29.5, width: 1.15 },
-  { src: roadSrc, at: { x: -17.2, z: -49.75 }, yawDeg: 180, length: 27.5, width: 1.15 },
-  { src: roadSrc, at: { x: -4.95, z: -31 }, yawDeg: 90, length: 14.5, width: 1.15 },
-  { src: roadSrc, at: { x: -2.2, z: -38.5 }, yawDeg: 180, length: 24, width: 1.15 },
-  { src: roadSrc, at: { x: 32.55, z: -1 }, yawDeg: 90, length: 29.5, width: 1.15 },
-  { src: roadSrc, at: { x: 27.8, z: -4.25 }, yawDeg: 180, length: 26.5, width: 1.15 },
-  { src: roadSrc, at: { x: 46.55, z: 14 }, yawDeg: 90, length: 27.5, width: 1.15 },
-  { src: roadSrc, at: { x: 42.8, z: 9.25 }, yawDeg: 180, length: 29.5, width: 1.15 },
+    // --- the extension's streets ---
+    // Along the world axes, exactly as the four above are — which at yaw 45 is what reads
+    // as a diagonal on screen. Each one is a grid line clipped to the band the frame can
+    // hold, so a road that would run out of shot simply stops. See the buildings list.
+    { src: roadSrc, at: { x: -16.2, z: -59.98 }, yawDeg: 90, length: 9, width: 1.15 },
+    { src: roadSrc, at: { x: -16.2, z: -50.6 }, yawDeg: 90, length: 28, width: 1.15 },
+    { src: roadSrc, at: { x: 29.3, z: -4.89 }, yawDeg: 90, length: 28, width: 1.15 },
+    { src: roadSrc, at: { x: 41.05, z: 7.62 }, yawDeg: 90, length: 29.5, width: 1.15 },
+    { src: roadSrc, at: { x: 46.55, z: 16.04 }, yawDeg: 90, length: 23.5, width: 1.15 },
+    { src: roadSrc, at: { x: -9.14, z: -42.75 }, yawDeg: 180, length: 29.5, width: 1.15 },
+    { src: roadSrc, at: { x: 1.54, z: -38.5 }, yawDeg: 180, length: 17, width: 1.15 },
+    { src: roadSrc, at: { x: 25.21, z: -4.25 }, yawDeg: 180, length: 21.5, width: 1.15 },
+    { src: roadSrc, at: { x: 33.45, z: 0 }, yawDeg: 180, length: 30, width: 1.15 },
+    { src: roadSrc, at: { x: 55.62, z: 13 }, yawDeg: 180, length: 11, width: 1.15 },
   ],
   roadWidth: 1.15,
   lift: 0.01, // the roads are decals on the grass and need the same hair of clearance
@@ -981,49 +1000,47 @@ const EXPANSION = {
     // Which model lands on which lot is picked by hash, never repeating the last two and
     // never past a cap: walking the list in order stamped the same run of models over and
     // over, which reads as a pattern rather than as a town.
-  { key: 'street0', src: stationSrc, at: { x: -17.56, z: -56.63 }, size: 2.74, yawDeg: 270 },
-  { key: 'street1', src: feedMakerSrc, at: { x: -12.11, z: -56.8 }, size: 1.68, yawDeg: 90 },
-  { key: 'kerb0', src: lampSrc, at: { x: -10.5, z: -58.6 }, size: 1.4, yawDeg: 90 },
-  { key: 'street2', src: bakerySrc, at: { x: -17.65, z: -52.2 }, size: 2.06, yawDeg: 270 },
-  { key: 'street3', src: stationSrc, at: { x: -11.74, z: -51.6 }, size: 2.58, yawDeg: 90 },
-  { key: 'street4', src: homeSrc, at: { x: -17.41, z: -46.8 }, size: 2.56, yawDeg: 270 },
-  { key: 'street5', src: bakerySrc, at: { x: -12.17, z: -46.4 }, size: 2.25, yawDeg: 90 },
-  { key: 'kerb1', src: mailboxSrc, at: { x: -10.5, z: -47.6 }, size: 1, yawDeg: 90 },
-  { key: 'street6', src: siloSrc, at: { x: -17.63, z: -40.64 }, size: 2.27, yawDeg: 270 },
-  { key: 'street7', src: townBarnSrc, at: { x: -12.01, z: -40.15 }, size: 3.4, yawDeg: 90 },
-  { key: 'street8', src: tentSrc, at: { x: -7.35, z: -46.41 }, size: 1.94, yawDeg: 270 },
-  { key: 'street9', src: jamStationSrc, at: { x: -1.04, z: -46.36 }, size: 1.63, yawDeg: 90 },
-  { key: 'kerb2', src: crateSrc, at: { x: 0.5, z: -47.6 }, size: 1, yawDeg: 90 },
-  { key: 'street10', src: coopSrc, at: { x: -6.76, z: -39.85 }, size: 2.56, yawDeg: 270 },
-  { key: 'street11', src: townBarnSrc, at: { x: -0.01, z: -40.28 }, size: 3.36, yawDeg: 90 },
-  { key: 'street12', src: feedMakerSrc, at: { x: -6.4, z: -34.86 }, size: 2.06, yawDeg: 270 },
-  { key: 'street13', src: farmhouseSrc, at: { x: -0.44, z: -36.03 }, size: 2.46, yawDeg: 90 },
-  { key: 'street14', src: homeSrc, at: { x: -6.35, z: -29.19 }, size: 2.59, yawDeg: 270 },
-  { key: 'street15', src: windmillSrc, at: { x: -0.99, z: -29.64 }, size: 3.36, yawDeg: 90 },
-  { key: 'street16', src: feedMakerSrc, at: { x: 26.02, z: -13.82 }, size: 1.9, yawDeg: 180 },
-  { key: 'street17', src: siloSrc, at: { x: 32.48, z: -12.72 }, size: 1.96, yawDeg: 180 },
-  { key: 'street18', src: windmillSrc, at: { x: 25.91, z: -6.88 }, size: 2.81, yawDeg: 0 },
-  { key: 'street19', src: tentSrc, at: { x: 32.58, z: -7.95 }, size: 1.91, yawDeg: 0 },
-  { key: 'street20', src: homeSrc, at: { x: 25.94, z: -2.09 }, size: 2.01, yawDeg: 180 },
-  { key: 'street21', src: windmillSrc, at: { x: 32.33, z: -2.64 }, size: 2.93, yawDeg: 180 },
-  { key: 'street22', src: townBarnSrc, at: { x: 26.89, z: 3.08 }, size: 3.2, yawDeg: 0 },
-  { key: 'street23', src: homeSrc, at: { x: 31.64, z: 3.72 }, size: 2.25, yawDeg: 0 },
-  { key: 'street24', src: bakerySrc, at: { x: 37.39, z: -1.75 }, size: 1.86, yawDeg: 180 },
-  { key: 'street25', src: coopSrc, at: { x: 43.67, z: -1.98 }, size: 2.75, yawDeg: 180 },
-  { key: 'street26', src: homeSrc, at: { x: 37.35, z: 3.88 }, size: 2.39, yawDeg: 0 },
-  { key: 'street27', src: siloSrc, at: { x: 43.75, z: 3.21 }, size: 2.16, yawDeg: 0 },
-  { key: 'street28', src: farmhouseSrc, at: { x: 37.43, z: 8.84 }, size: 2.5, yawDeg: 180 },
-  { key: 'street29', src: homeSrc, at: { x: 42.42, z: 8.33 }, size: 2.03, yawDeg: 180 },
-  { key: 'kerb3', src: windChimeSrc, at: { x: 44.5, z: 7.4 }, size: 2, yawDeg: 90 },
-  { key: 'street30', src: siloSrc, at: { x: 37.17, z: 14.81 }, size: 2.16, yawDeg: 0 },
-  { key: 'street31', src: windmillSrc, at: { x: 43.99, z: 13.98 }, size: 2.94, yawDeg: 0 },
-  { key: 'street32', src: coopSrc, at: { x: 48.01, z: 9.25 }, size: 2.62, yawDeg: 180 },
-  { key: 'street33', src: tentSrc, at: { x: 54.27, z: 7.82 }, size: 2.16, yawDeg: 180 },
-  { key: 'street34', src: jamStationSrc, at: { x: 48.85, z: 14.98 }, size: 1.93, yawDeg: 0 },
-  { key: 'street35', src: siloSrc, at: { x: 53.5, z: 14.27 }, size: 2.28, yawDeg: 0 },
-  { key: 'parked0', src: vanSrc, at: { x: -7.82, z: -51.6 }, size: 2, yawDeg: 180 },
-  { key: 'parked1', src: vanSrc, at: { x: 36.17, z: -7.6 }, size: 2, yawDeg: 180 },
-  ],
+    { key: 'street0', src: stationSrc, at: { x: -20.41, z: -56.25 }, size: 2.74, yawDeg: 0, align: 90 },
+    { key: 'street1', src: feedMakerSrc, at: { x: -15.26, z: -56.37 }, size: 1.68, yawDeg: 0, align: 90 },
+    { key: 'street2', src: bakerySrc, at: { x: -25.87, z: -54.21 }, size: 2.06, yawDeg: 0, align: 90 },
+    { key: 'kerb0', src: lampSrc, at: { x: -24.08, z: -52.6 }, size: 4.4, yawDeg: 0, align: 90 },
+    { key: 'street3', src: stationSrc, at: { x: -15, z: -53.8 }, size: 2.58, yawDeg: 0, align: 90 },
+    { key: 'street4', src: homeSrc, at: { x: -12.21, z: -55.57 }, size: 2.56, yawDeg: 0, align: 0 },
+    { key: 'kerb1', src: mailboxSrc, at: { x: -11.14, z: -53.54 }, size: 1, yawDeg: 0, align: 0 },
+    { key: 'street5', src: bakerySrc, at: { x: -4.05, z: -47.4 }, size: 2.25, yawDeg: 0, align: 90 },
+    { key: 'kerb2', src: crateSrc, at: { x: -2.05, z: -48.6 }, size: 1, yawDeg: 0, align: 90 },
+    { key: 'street6', src: siloSrc, at: { x: -3.82, z: -30.3 }, size: 2.27, yawDeg: 0, align: 90 },
+    { key: 'street7', src: tentSrc, at: { x: -11.18, z: -38.24 }, size: 2, yawDeg: 0, align: 180 },
+    { key: 'street8', src: treeSrc, at: { x: -6.46, z: -38.84 }, size: 2.94, yawDeg: 0, align: 0 },
+    { key: 'street9', src: jamStationSrc, at: { x: -6.11, z: -33.1 }, size: 1.63, yawDeg: 0, align: 0 },
+    { key: 'street10', src: coopSrc, at: { x: -1.77, z: -44.03 }, size: 2.56, yawDeg: 0, align: 0 },
+    { key: 'street11', src: townBarnSrc, at: { x: -1.12, z: -38.62 }, size: 3.36, yawDeg: 0, align: 180 },
+    { key: 'street12', src: feedMakerSrc, at: { x: -1.52, z: -32.76 }, size: 2.06, yawDeg: 0, align: 0 },
+    { key: 'street13', src: farmhouseSrc, at: { x: 29.58, z: -14.04 }, size: 2.46, yawDeg: 0, align: 90 },
+    { key: 'street14', src: homeSrc, at: { x: 29.5, z: -7.81 }, size: 2.59, yawDeg: 0, align: 90 },
+    { key: 'street15', src: windmillSrc, at: { x: 28.28, z: -10.88 }, size: 3.36, yawDeg: 0, align: 0 },
+    { key: 'street16', src: feedMakerSrc, at: { x: 29.07, z: -1.98 }, size: 1.9, yawDeg: 0, align: 90 },
+    { key: 'kerb3', src: windChimeSrc, at: { x: 31.08, z: -2.89 }, size: 2, yawDeg: 0, align: 90 },
+    { key: 'street17', src: siloSrc, at: { x: 29.53, z: 4.89 }, size: 1.96, yawDeg: 0, align: 90 },
+    { key: 'street18', src: windmillSrc, at: { x: 28.08, z: 1.86 }, size: 2.81, yawDeg: 0, align: 0 },
+    { key: 'street19', src: jamStationSrc, at: { x: 30.51, z: 1.13 }, size: 1.71, yawDeg: 0, align: 0 },
+    { key: 'kerb4', src: scarecrowSrc, at: { x: 31.45, z: 3.12 }, size: 1.4, yawDeg: 0, align: 0 },
+    { key: 'street20', src: homeSrc, at: { x: 38.96, z: -1.48 }, size: 2.01, yawDeg: 0, align: 90 },
+    { key: 'kerb5', src: lampSrc, at: { x: 41.03, z: -2.89 }, size: 1.4, yawDeg: 0, align: 90 },
+    { key: 'street21', src: windmillSrc, at: { x: 44.62, z: -1.86 }, size: 2.93, yawDeg: 0, align: 90 },
+    { key: 'street22', src: townBarnSrc, at: { x: 39.61, z: 4.2 }, size: 3.2, yawDeg: 0, align: 90 },
+    { key: 'street23', src: homeSrc, at: { x: 44.15, z: 4.64 }, size: 2.25, yawDeg: 0, align: 90 },
+    { key: 'street24', src: bakerySrc, at: { x: 49.78, z: 4.87 }, size: 1.86, yawDeg: 0, align: 90 },
+    { key: 'street25', src: coopSrc, at: { x: 36.97, z: 1.65 }, size: 2.75, yawDeg: 0, align: 0 },
+    { key: 'street26', src: homeSrc, at: { x: 39.24, z: 11.15 }, size: 2.39, yawDeg: 0, align: 90 },
+    { key: 'kerb6', src: mailboxSrc, at: { x: 41.03, z: 9.62 }, size: 1, yawDeg: 0, align: 90 },
+    { key: 'street27', src: siloSrc, at: { x: 44.91, z: 10.69 }, size: 2.16, yawDeg: 0, align: 90 },
+    { key: 'street28', src: farmhouseSrc, at: { x: 49.81, z: 10.99 }, size: 2.5, yawDeg: 0, align: 90 },
+    { key: 'street29', src: homeSrc, at: { x: 36.11, z: 11.64 }, size: 2.03, yawDeg: 0, align: 0 },
+    { key: 'kerb7', src: crateSrc, at: { x: 35.45, z: 13.58 }, size: 1, yawDeg: 0, align: 0 },
+    { key: 'street30', src: siloSrc, at: { x: 52.26, z: 12.11 }, size: 2.16, yawDeg: 0, align: 0 },
+    { key: 'parked1', src: vanSrc, at: { x: -24.6, z: -49.22 }, size: 2, yawDeg: 0, align: 90 },
+  ] as VillageProp[],
   // The pens, and what makes the whole thing read as a farm: runs of white fence around
   // the cow shed, the coop and the crop. Each run is a row of panels from its middle,
   // along x unless alongZ says otherwise.
@@ -1037,7 +1054,7 @@ const EXPANSION = {
     { at: { x: 16.85, z: -24 }, count: 4, spacing: 1, alongZ: true },
     { at: { x: 11, z: -20.15 }, count: 3, spacing: 0.9 },
     { at: { x: 11.5, z: -16.85 }, count: 3, spacing: 1.1 },
-    { at: { x: 9.35, z: -17.75 }, count: 2, spacing: 0.9, alongZ: true },
+    { at: { x: 9.35, z: -17.75 }, count: 2, spacing: 0.9, alongZ: true }
   ],
   // A fence PANEL's width, not its height: the model is a flat 2.0 x 1.1 board authored
   // Z-UP — the reference's own config rights it with rotation x -90 and scales it on z —
@@ -1062,7 +1079,13 @@ const EXPANSION = {
   trucks: [
     { src: truckSrc, at: { x: 5, z: -21.5 }, height: 1.6, yawDeg: 90 },
     { src: truckElectricSrc, at: { x: 14.5, z: -7 }, height: 1.5, yawDeg: 0 },
-  ],
+    // --- the extension's vehicles ---
+    // Two more, out on its longest streets. Only these two models idle: they came through
+    // scripts_fbx2glb.mjs and this path binds the atlas flipped for them, which is why the
+    // extension's two vans are in the buildings list instead.
+    { src: truckSrc, at: { x: 33.45, z: 8.4 }, height: 1.6, yawDeg: 0, align: 180 },
+    { src: truckElectricSrc, at: { x: -9.14, z: -34.49 }, height: 1.5, yawDeg: 0, align: 180 },
+  ] as Array<{ src: string; at: { x: number; z: number }; height: number; yawDeg: number; align?: number }>,
   idle: { rise: 0.012, rate: 9.5, rock: 0.5 }, // world units, rad/s, degrees
   // One arrow per KIND of opportunity, each ON the prop it points at. These carried the same
   // stale offset the crop did, so three of the four hovered over open grass.
@@ -1073,6 +1096,23 @@ const EXPANSION = {
     { at: { x: 20.5, z: -13.5 }, over: 0.9 } // the crop
   ],
   arrow: { size: 1.8, bob: 0.3, rate: 2.2, fade: 0.4, stagger: 0.22 },
+  // --- the call to action ---
+  //
+  // Three upgrades to choose from, each with a down arrow over it, and any of them ends the
+  // ad. The icons are RENDERED off the models themselves (see modelIcon) rather than drawn,
+  // so they cost nothing in bundle and cannot drift from the props they stand for.
+  //
+  // The sheep house is the one model in the project with no usable texture — its UVs do not
+  // line up with our Buildings.jpg, see the note at its import — so it is rendered in flat
+  // cream. At button size an untextured building still reads as a building; drop the pack's
+  // own Buildings.png into assets/images and it can have its atlas back.
+  cta: {
+    delay: 0.9, // seconds after the wide shot settles, so the arrows land first
+    icon: 256, // px each icon is rendered at
+    tone: 0xf0e2c0, // what an untextured icon is painted
+    // The down arrow over each button, as a fraction of the button
+    arrow: { size: 0.52, gap: 0.06, bob: 0.16, rate: 1.15, stagger: 0.18, fade: 0.35 }
+  },
   // --- the ground the village stands on ---
   //
   // The reference's farm is not just its buildings: it carries six scatters, and they are most
@@ -1105,6 +1145,12 @@ const EXPANSION = {
     rocks: { count: 34, inner: 6.5, outer: 36, min: 0.4, max: 1.0, spacing: 0.9, salt: 311 }
   }
 };
+
+/** Is `node` somewhere under `root`? Used to keep one branch of a model and hide the rest. */
+function isDescendant(node: THREE.Object3D, root: THREE.Object3D): boolean {
+  for (let at = node.parent; at; at = at.parent) if (at === root) return true;
+  return false;
+}
 
 /** A village position, scaled about EXPANSION.at — see EXPANSION.scale. */
 function villageAt(at: { x: number; z: number }): { x: number; z: number } {
@@ -1720,6 +1766,7 @@ export class IslandScene {
   private speech?: THREE.Sprite; // only ever one, and it follows its speaker
   private speaker = 0; // whose turn it is to talk; every line swaps it
   private bubbleImage?: HTMLImageElement;
+  private finishing = false; // the end card is a one-way door — see finishAd
   // Characters currently under way. Populated by the break, emptied as each one
   // covers RUN.distance.
   private runners: Array<{
@@ -2238,6 +2285,268 @@ export class IslandScene {
    * sees these; onPointerDown stands the world down while the row is up.
    */
   private showToolChoice(icons: string[], onPick: () => void): void {
+    const { row, button } = this.choiceRow();
+
+    const right = button(icons[0], () => {
+      this.clearToolChoice();
+      onPick();
+    });
+    icons.slice(1).forEach((src) => button(src, (el) => this.wobbleTool(el)));
+
+    document.body.appendChild(row);
+    this.toolChoice = row;
+    requestAnimationFrame(() => (row.style.opacity = '1')); // a frame late, or
+    // the transition has nothing to run from
+
+    // The same press-press-rest beat as the world tap hint, in the same PNG.
+    const hand = document.createElement('img');
+    hand.src = pointerSrc;
+    Object.assign(hand.style, {
+      position: 'absolute',
+      // Overlaid on the button, with the fingertip handOverlay into it. Both terms are in
+      // percentages OF THE BUTTON, which is what top/left resolve against: the overlay is
+      // already in those units, and the tip's own 7.5% is 7.5% of the hand, hence the
+      // TOOL_CHOICE.hand factor.
+      top: `${100 - TOOL_CHOICE.handOverlay * 100 - TOOL_CHOICE.hand * TOOL_CHOICE.handTip.y * 100}%`,
+      // Measured off the art, not guessed: the fingertip sits 17.5% across PointerHand.png,
+      // so the image is pulled left by that much of ITS OWN width to put the tip under the
+      // middle of the button. At left 60% the hand hung off the button's right-hand side
+      // and pointed at nothing.
+      left: `calc(50% - ${TOOL_CHOICE.hand * TOOL_CHOICE.handTip.x * 100}%)`,
+      width: `calc(${TOOL_CHOICE.button} * ${TOOL_CHOICE.hand})`,
+      pointerEvents: 'none'
+    } as CSSStyleDeclaration);
+    right.appendChild(hand);
+    hand.animate(
+      [
+        { transform: 'translateY(0) scale(1)' },
+        { transform: 'translateY(-8%) scale(0.94)', offset: 0.06 },
+        { transform: 'translateY(0) scale(1)', offset: 0.12 },
+        { transform: 'translateY(-8%) scale(0.94)', offset: 0.35 },
+        { transform: 'translateY(0) scale(1)', offset: 0.41 },
+        { transform: 'translateY(0) scale(1)' }
+      ],
+      { duration: TAP_HINT.cycle * 1000, iterations: Infinity, delay: TOOL_CHOICE.hint }
+    );
+  }
+
+  /**
+   * Render one model to a PNG data URI, for use as a button icon.
+   *
+   * The alternative was three more images in the bundle, and icons that drift from the props
+   * they stand for the moment anything is retuned. This borrows the model that is already
+   * loaded for the world, shoots it from the SAME iso angle under the same light ratios, and
+   * hands back a picture — so a button looks like the thing it builds, at no bundle cost.
+   *
+   * It runs on its OWN renderer, disposed immediately: the scene's is sized to the screen and
+   * has no preserveDrawingBuffer, so toDataURL against it comes back blank. Three icons, one
+   * at a time, at load — the extra context is alive for a few frames.
+   */
+  private async modelIcon(
+    src: string,
+    flip: boolean,
+    tint?: number,
+    // Keep ONLY this node out of the file. SheepHome.glb is four of them — the building, a
+    // pasture patch, grass and vegetation — and the vegetation is the tallest thing in it, so
+    // fitting the frame to the whole file put a foliage fan on the button with the barn a
+    // speck beside it.
+    only?: string
+  ): Promise<string> {
+    const size = EXPANSION.cta.icon;
+    // BOTH awaited before anything is drawn. The first version rendered inside the GLTF
+    // callback with a TextureLoader().load() still in flight, so every icon came out a black
+    // silhouette — the material had a map with no image in it yet.
+    const [gltf, texture] = await Promise.all([
+      new GLTFLoader().loadAsync(src).catch((err: unknown) => {
+        console.error(`Icon model failed to load (${src.slice(0, 40)}):`, err);
+        return null;
+      }),
+      tint ? Promise.resolve(null) : new THREE.TextureLoader().loadAsync(boatTextureSrc)
+    ]);
+    if (!gltf) return '';
+
+    const model = (gltf as { scene: THREE.Group }).scene;
+    // Unwanted parts are HIDDEN, never pulled out of the file. These GLBs carry quantized
+    // positions, and the scale that decodes them lives on the node's parents — so lifting one
+    // node into a scene of its own drops that scale and the mesh renders as a crumpled sheet,
+    // which is exactly what the sheep home did.
+    if (only) {
+      const keep = model.getObjectByName(only);
+      if (!keep) console.warn(`Icon: no node named ${only} in ${src.slice(0, 30)}`);
+      model.traverse((child: THREE.Object3D) => {
+        const wanted =
+          !!keep &&
+          (child === keep || isDescendant(child, keep)) &&
+          !/grass|vegetation|pasture/i.test(child.name);
+        if ((child as THREE.Mesh).isMesh) child.visible = wanted;
+      });
+    }
+    if (texture) {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.flipY = flip;
+      texture.needsUpdate = true;
+    }
+    const material = texture
+      ? new THREE.MeshStandardMaterial({ map: texture, roughness: 1 })
+      : new THREE.MeshStandardMaterial({ color: tint, roughness: 1 });
+    model.traverse((child: THREE.Object3D) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = material;
+    });
+
+    // Centred on its own bounding box, over the VISIBLE meshes only — Box3.setFromObject
+    // counts hidden ones too, which would frame the icon on foliage that is not being drawn.
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    const corner = new THREE.Vector3();
+    model.traverse((child: THREE.Object3D) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.visible || !mesh.geometry) return;
+      mesh.geometry.computeBoundingBox();
+      const local = mesh.geometry.boundingBox;
+      if (!local) return;
+      for (const x of [local.min.x, local.max.x])
+        for (const y of [local.min.y, local.max.y])
+          for (const z of [local.min.z, local.max.z])
+            box.expandByPoint(corner.set(x, y, z).applyMatrix4(mesh.matrixWorld));
+    });
+    const middle = box.getCenter(new THREE.Vector3());
+    model.position.sub(middle);
+    box.translate(middle.clone().negate());
+
+    const scene = new THREE.Scene();
+    scene.add(model);
+    scene.add(new THREE.AmbientLight(0xffffff, LIGHTS.ambient));
+    const sun = new THREE.DirectionalLight(0xffffff, LIGHTS.sun);
+    sun.position.copy(ISO_DIR).multiplyScalar(10);
+    scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xffffff, LIGHTS.fill * 0.6);
+    fill.position.set(0, 10, 0);
+    scene.add(fill);
+
+    // Framed on what the camera actually SEES: the box's eight corners, projected onto the
+    // camera's own right and up. Guessing from the box's width and height (or from a bounding
+    // sphere) leaves a wide, shallow building swimming in empty pixels at button size, which
+    // is most of why the first icons read as specks.
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+    camera.position.copy(ISO_DIR).multiplyScalar(50);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+    let half = 0;
+    for (const x of [box.min.x, box.max.x])
+      for (const y of [box.min.y, box.max.y])
+        for (const z of [box.min.z, box.max.z]) {
+          const corner = new THREE.Vector3(x, y, z);
+          half = Math.max(half, Math.abs(corner.dot(right)), Math.abs(corner.dot(up)));
+        }
+    half *= 1.06; // a hair of margin, so nothing touches the edge of the icon
+    camera.left = -half;
+    camera.right = half;
+    camera.top = half;
+    camera.bottom = -half;
+    camera.updateProjectionMatrix();
+
+    // Its own renderer, disposed straight away: the scene's is sized to the screen and has no
+    // preserveDrawingBuffer, so toDataURL against it comes back blank.
+    const renderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      preserveDrawingBuffer: true
+    });
+    renderer.setSize(size, size);
+    renderer.setClearAlpha(0);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.render(scene, camera);
+    const url = renderer.domElement.toDataURL('image/png');
+    renderer.dispose();
+    renderer.forceContextLoss();
+    return url;
+  }
+
+  /**
+   * The expansion's call to action: three upgrades, a down arrow bobbing over each, and any
+   * tap ends the ad.
+   *
+   * Every button is live — there is no wrong answer here, unlike the tool choices — so the
+   * arrows do the pointing instead of the hand, which can only point at one.
+   */
+  private async showUpgradeChoice(): Promise<void> {
+    const cta = EXPANSION.cta;
+    const icons = await Promise.all([
+      this.modelIcon(coopSrc, false),
+      // The livestock house. NOT SheepHome.glb: its geometry comes through this project's
+      // FBX conversion mangled — 1674 verts that render as a crumpled sheet whatever is done
+      // with materials, hiding its pasture and vegetation, or the node's own transform. Its
+      // texture was already known to be unusable (see its import); the shape is too, so it
+      // needs re-exporting before it can be either an icon or a prop. The cow shed is the
+      // nearest thing that renders, and it is already standing in the village.
+      this.modelIcon(cowShedSrc, false),
+      this.modelIcon(truckSrc, true)
+    ]);
+    // The icons are awaited, so the ad can be torn down while they render.
+    if (!this.running) return;
+
+    const { row, button } = this.choiceRow();
+    icons.forEach((icon, i) => {
+      const el = button(icon, () => this.finishAd());
+
+      // A down arrow over the button, in the same art the world arrows use. Staggered in, so
+      // the three of them arrive as a sequence rather than a block.
+      const arrow = document.createElement('img');
+      arrow.src = arrowSrc;
+      Object.assign(arrow.style, {
+        position: 'absolute',
+        bottom: `calc(100% + ${cta.arrow.gap * 100}%)`,
+        left: `${50 - (cta.arrow.size * 100) / 2}%`,
+        width: `${cta.arrow.size * 100}%`,
+        opacity: '0',
+        transition: `opacity ${cta.arrow.fade}s`,
+        pointerEvents: 'none'
+      } as CSSStyleDeclaration);
+      el.appendChild(arrow);
+      window.setTimeout(() => (arrow.style.opacity = '1'), i * cta.arrow.stagger * 1000);
+      arrow.animate(
+        [
+          { transform: 'translateY(0)' },
+          { transform: `translateY(${cta.arrow.bob * 100}%)`, offset: 0.5 },
+          { transform: 'translateY(0)' }
+        ],
+        {
+          duration: (1 / cta.arrow.rate) * 1000,
+          iterations: Infinity,
+          delay: i * cta.arrow.stagger * 1000,
+          easing: 'ease-in-out'
+        }
+      );
+    });
+
+    document.body.appendChild(row);
+    this.toolChoice = row; // so a resize or a destroy clears it like any other choice
+    requestAnimationFrame(() => (row.style.opacity = '1'));
+  }
+
+  /**
+   * Hand over to the end card. sdk.finish() is what does it — the network puts its own card
+   * up on that event, and Game.finish tears the two layers down underneath it. Guarded
+   * because all three buttons call it and a second finish would be a second handover.
+   */
+  private finishAd(): void {
+    if (this.finishing) return;
+    this.finishing = true;
+    this.clearToolChoice();
+    sdk.finish();
+  }
+
+  /**
+   * The row of white buttons, and the factory for one. Shared by the tool choices and by the
+   * expansion's call to action, so the z-index fix below lives in exactly one place.
+   */
+  private choiceRow(): {
+    row: HTMLDivElement;
+    button: (icon: string, onTap: (el: HTMLElement) => void) => HTMLElement;
+  } {
     const row = document.createElement('div');
     Object.assign(row.style, {
       position: 'absolute',
@@ -2298,47 +2607,7 @@ export class IslandScene {
       return el;
     };
 
-    const right = button(icons[0], () => {
-      this.clearToolChoice();
-      onPick();
-    });
-    icons.slice(1).forEach((src) => button(src, (el) => this.wobbleTool(el)));
-
-    document.body.appendChild(row);
-    this.toolChoice = row;
-    requestAnimationFrame(() => (row.style.opacity = '1')); // a frame late, or
-    // the transition has nothing to run from
-
-    // The same press-press-rest beat as the world tap hint, in the same PNG.
-    const hand = document.createElement('img');
-    hand.src = pointerSrc;
-    Object.assign(hand.style, {
-      position: 'absolute',
-      // Overlaid on the button, with the fingertip handOverlay into it. Both terms are in
-      // percentages OF THE BUTTON, which is what top/left resolve against: the overlay is
-      // already in those units, and the tip's own 7.5% is 7.5% of the hand, hence the
-      // TOOL_CHOICE.hand factor.
-      top: `${100 - TOOL_CHOICE.handOverlay * 100 - TOOL_CHOICE.hand * TOOL_CHOICE.handTip.y * 100}%`,
-      // Measured off the art, not guessed: the fingertip sits 17.5% across PointerHand.png,
-      // so the image is pulled left by that much of ITS OWN width to put the tip under the
-      // middle of the button. At left 60% the hand hung off the button's right-hand side
-      // and pointed at nothing.
-      left: `calc(50% - ${TOOL_CHOICE.hand * TOOL_CHOICE.handTip.x * 100}%)`,
-      width: `calc(${TOOL_CHOICE.button} * ${TOOL_CHOICE.hand})`,
-      pointerEvents: 'none'
-    } as CSSStyleDeclaration);
-    right.appendChild(hand);
-    hand.animate(
-      [
-        { transform: 'translateY(0) scale(1)' },
-        { transform: 'translateY(-8%) scale(0.94)', offset: 0.06 },
-        { transform: 'translateY(0) scale(1)', offset: 0.12 },
-        { transform: 'translateY(-8%) scale(0.94)', offset: 0.35 },
-        { transform: 'translateY(0) scale(1)', offset: 0.41 },
-        { transform: 'translateY(0) scale(1)' }
-      ],
-      { duration: TAP_HINT.cycle * 1000, iterations: Infinity, delay: TOOL_CHOICE.hint }
-    );
+    return { row, button };
   }
 
   /**
@@ -3630,13 +3899,25 @@ export class IslandScene {
     // The reference sizes every prop by its LARGEST dimension ('max' in its own config),
     // not by height the way the rest of this scene does — which is what keeps its
     // buildings in proportion to each other. So this takes that measure instead.
+    /**
+     * `align`, when given, replaces yawDeg: it turns the model so its LONGEST horizontal side
+     * runs along that heading, whatever the model's own authored front happens to be.
+     *
+     * The extension's lots need that. The core's entries carry the reference's own rotations
+     * and are left alone, but generated lots have nothing to copy, and the rule they used —
+     * "the models front along +Z" — is simply not true: each of these was authored facing a
+     * different way, so a third of the street came out square to its own plot. A building's
+     * long side is its ridge, and a ridge parallel to the road is what reads as a street; the
+     * measurement is already being taken here to scale the thing.
+     */
     const place = (
       src: string,
       at: { x: number; z: number },
       maxDim: number,
       yawDeg: number,
       flip: boolean,
-      onReady?: (pivot: THREE.Group) => void
+      onReady?: (pivot: THREE.Group) => void,
+      align?: number
     ) => {
       loader.load(
         src,
@@ -3659,7 +3940,11 @@ export class IslandScene {
           const pivot = new THREE.Group();
           pivot.add(model);
           pivot.position.set(at.x, 0, at.z);
-          pivot.rotation.y = THREE.MathUtils.degToRad(yawDeg);
+          // A model whose long side is its local X needs a further quarter turn to lay that
+          // side along `align`; one whose long side is Z is already there.
+          pivot.rotation.y = THREE.MathUtils.degToRad(
+            align === undefined ? yawDeg : align + (size.x > size.z ? 90 : 0)
+          );
           group.add(pivot);
           if (onReady) onReady(pivot);
         },
@@ -3717,7 +4002,15 @@ export class IslandScene {
     // flip TRUE only for the models that came through scripts_fbx2glb.mjs (their farmhouse,
     // and our two trucks); every other prop here is one of the farm's own GLBs.
     EXPANSION.buildings.forEach((b) =>
-      place(b.src, villageAt(b.at), b.size * EXPANSION.scale, b.yawDeg, b.src === farmhouseSrc)
+      place(
+        b.src,
+        villageAt(b.at),
+        b.size * EXPANSION.scale,
+        b.yawDeg,
+        b.src === farmhouseSrc,
+        undefined,
+        b.align
+      )
     );
 
     // The pens. Each run is a row of panels either side of its middle — the fence model
@@ -3773,7 +4066,8 @@ export class IslandScene {
         truck.height * EXPANSION.scale,
         truck.yawDeg,
         true,
-        (pivot) => this.idle(pivot)
+        (pivot) => this.idle(pivot),
+        truck.align
       )
     );
 
@@ -3909,7 +4203,12 @@ export class IslandScene {
       new THREE.Vector3(EXPANSION.centre.x, CAMERA_FOLLOW.aimHeight, EXPANSION.centre.z),
       EXPANSION.frame,
       EXPANSION.ease,
-      () => this.showArrows()
+      () => {
+        this.showArrows();
+        // ...and the three upgrades to choose from, a beat later so the world arrows land
+        // first and the eye is already on the village.
+        this.wait(EXPANSION.cta.delay, () => void this.showUpgradeChoice());
+      }
     );
   }
 
