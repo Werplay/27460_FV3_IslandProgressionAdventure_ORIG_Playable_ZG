@@ -2,12 +2,18 @@ import { sdk } from '@smoud/playable-sdk';
 import * as Phaser from 'phaser';
 import { OverlayScene } from './overlay/OverlayScene';
 import { showEndCard } from './overlay/EndCard';
+import { Music } from './audio/Music';
+import { sfx } from './audio/Sfx';
 import { IslandScene } from './scenes/IslandScene';
 import { resolveDebugStart, type DebugScene, type IslandStage } from './config/debugConfig';
 
 /** Everything the coordinator needs from whichever 3D layer is active. */
 interface PlayableScene {
   resize(width: number, height: number): void;
+  /** The fog is about to part: push the camera in behind it. */
+  introZoom?(): void;
+  /** The overlay has finished: start whatever the player is meant to watch. */
+  begin?(): void;
   pause(): void;
   resume(): void;
   destroy(): void;
@@ -21,6 +27,7 @@ export class Game {
   private paused = false;
   private finished = false;
   private endCard?: Phaser.Game;
+  private music = new Music();
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -28,6 +35,10 @@ export class Game {
 
     // Signal to the SDK that the playable is ready and the experience begins.
     sdk.start();
+
+    // The track runs under everything, intro video included. It cannot actually sound until the
+    // player touches the screen — see Music.start — so this is a request, not a guarantee.
+    this.music.start();
 
     const debug = resolveDebugStart();
     if (debug.enabled) {
@@ -55,7 +66,14 @@ export class Game {
     });
     this.overlay.registry.set('hooks', {
       onCovered: () => this.revealScene(),
-      onDone: () => {}
+      // The fog is thinning and the world is coming through: push the camera in NOW, with the
+      // whoosh, rather than at full coverage — a move started behind solid fog is half over
+      // before it can be seen, so the sound arrived ahead of any visible zoom.
+      onClearing: () => this.island?.introZoom?.(),
+      // Clouds receded, world on screen: only NOW does the first beat run. The scene has been
+      // rendering behind the intro all along, which is what makes the reveal instant, but its
+      // opening choice used to be offered while the video still covered it.
+      onDone: () => this.island?.begin?.()
     });
 
     // Keep the overlay canvas on top of the Three.js canvas.
@@ -93,6 +111,8 @@ export class Game {
     }
     this.island = scene;
     scene.resize(this.width, this.height);
+    // A debug start has no overlay to hand over, so the beat starts at once.
+    scene.begin?.();
     if (this.paused) scene.pause();
   }
 
@@ -117,17 +137,21 @@ export class Game {
 
   public pause(): void {
     this.paused = true;
+    this.music.pause();
     this.overlayScene?.setPaused(true);
     this.island?.pause();
   }
 
   public resume(): void {
     this.paused = false;
+    this.music.resume();
     this.overlayScene?.setPaused(false);
     this.island?.resume();
   }
 
   public volume(value: number): void {
+    this.music.setVolume(value);
+    sfx.setVolume(value);
     this.overlayScene?.setVolume(value);
   }
 
@@ -144,6 +168,8 @@ export class Game {
     this.finished = true;
     this.overlay?.destroy(true); // the intro layer has done its job
     this.overlay = undefined;
+    // The end card is the network's moment, not the ad's: the track stops with the gameplay.
+    this.music.stop();
     this.endCard = showEndCard(this.width, this.height);
     window.setTimeout(() => {
       this.island?.destroy();

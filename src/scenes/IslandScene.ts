@@ -4,6 +4,7 @@
 // (no perspective horizon), which is the classic Hay Day / FarmVille map look.
 import * as THREE from 'three';
 import { sdk } from '@smoud/playable-sdk';
+import { sfx } from '../audio/Sfx';
 import type { IslandStage } from '../config/debugConfig';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createIslandWater } from '../three/IslandWater.js';
@@ -181,6 +182,16 @@ const OPENING_FRAME = {
   portrait: { w: FIT_RADIUS, h: FIT_RADIUS * FRAME_HEIGHT_RATIO },
   landscape: { w: 2.8, h: 2.6 }
 };
+
+// The push-in that rides the fog clearing. `from` widens OPENING_FRAME to start on, and the
+// shot settles back onto it — so the zoom always lands on whatever the opening is set to
+// rather than on a second copy of those numbers.
+//
+// `ease` is matched to the two things it runs against: camera_zoom_in is 0.9s long, and the
+// last of the fog is gone about 1s after this starts (OverlayScene fires it FOG.reveal into
+// the clear). 1.2 lands the shot just after both, so the sound covers the move instead of
+// finishing under a camera still travelling.
+const INTRO_ZOOM = { from: 1.55, ease: 1.2 };
 
 // Lighting, taken from the reference playable (its ThreeSceneManager.addLights).
 const LIGHTS = {
@@ -1988,6 +1999,8 @@ export class IslandScene {
   private ctaShade?: HTMLElement; // the dark layer behind the call to action
   private brand?: HTMLElement; // the logo in the corner
   private fontReady = false; // see loadFont: the bubbles cannot be drawn until it is
+  private begun = false; // has the overlay handed over? see begin()
+  private onBegin?: () => void; // the first beat, waiting for it to
   private ctaTitle?: HTMLElement; // the line over the choice
   // Characters currently under way. Populated by the break, emptied as each one
   // covers RUN.distance.
@@ -2497,11 +2510,14 @@ export class IslandScene {
         }
 
         this.scene.add(group);
-        // Needs the breakable rock, which only exists now.
+        // Needs the breakable rock, which only exists now — and the player needs to SEE it
+        // offered, so it waits for the overlay to hand over (see begin).
         if (this.breakable) {
           // Stone: the hammer breaks it, the broom is no use against rock.
-          this.showToolChoice([hammerSrc, broomSrc], () => this.breakRubble());
-          this.say(SPEECH_LINES.tool);
+          this.whenVisible(() => {
+            this.showToolChoice([hammerSrc, broomSrc], () => this.breakRubble());
+            this.say(SPEECH_LINES.tool);
+          });
         }
       },
       undefined,
@@ -2562,6 +2578,44 @@ export class IslandScene {
       ],
       { duration: TAP_HINT.cycle * 1000, iterations: Infinity, delay: TOOL_CHOICE.hint }
     );
+  }
+
+  /**
+   * The intro overlay has handed over — the clouds have receded and the world is on screen — so
+   * the first beat may start.
+   *
+   * It used to start itself, the moment the rubble model finished loading, which is several
+   * seconds into the intro VIDEO: the tool row went up and the first line was said behind an
+   * opaque video, so by the time the player could see anything the hand had been pointing at a
+   * button for five seconds. The scene is still built and rendered early on purpose — that is
+   * what makes the reveal instant — but nothing the player is meant to WATCH runs until here.
+   */
+  /**
+   * The fog has covered the screen and is about to thin back out: widen the frustum and let it
+   * settle onto the opening frame, so the world is revealed being pushed INTO rather than
+   * sitting there waiting. Runs through moveCamera like every other reframe, with the target
+   * left where it is — only the zoom moves.
+   */
+  public introZoom(): void {
+    sfx.play('cameraZoom');
+    this.need.w *= INTRO_ZOOM.from;
+    this.need.h *= INTRO_ZOOM.from;
+    this.updateCamera();
+    this.moveCamera(this.cameraTarget.clone(), OPENING_FRAME, INTRO_ZOOM.ease);
+  }
+
+  public begin(): void {
+    if (this.begun) return;
+    this.begun = true;
+    const first = this.onBegin;
+    this.onBegin = undefined;
+    first?.();
+  }
+
+  /** Run this now if the world is already on screen, or the moment it is. */
+  private whenVisible(start: () => void): void {
+    if (this.begun) start();
+    else this.onBegin = start;
   }
 
   /**
@@ -3859,6 +3913,8 @@ export class IslandScene {
     this.hideTapHint();
     this.say(SPEECH_LINES.cowJoined, 4);
 
+    // With the celebration, so the sound and the bob are the same beat.
+    sfx.play('cow');
     this.setCowGait('happy');
     this.wait(COW.cheer, () => this.followPair());
   }
@@ -4635,6 +4691,8 @@ export class IslandScene {
    */
   private expansionMoment(): void {
     this.say(SPEECH_LINES.expand, 5);
+    // On the move starting, so it runs under the whole 2.4s pull-back rather than landing after.
+    sfx.play('cameraPull');
     this.moveCamera(
       new THREE.Vector3(EXPANSION.centre.x, CAMERA_FOLLOW.aimHeight, EXPANSION.centre.z),
       EXPANSION.frame,
@@ -4687,6 +4745,9 @@ export class IslandScene {
    */
   private plantWheat(): void {
     this.say(SPEECH_LINES.planted, 4);
+    // Once for the field, not once per plot: the sixteen beds come up FARM.stagger apart, and
+    // sixteen copies of the same rustle would be a burst of noise rather than a crop growing.
+    sfx.play('crop');
     // A beat to look at the crop, then they spot the barn.
     this.wait(BARN.delay, () => this.walkToBarn());
 
@@ -4797,6 +4858,9 @@ export class IslandScene {
   private chopTree(tree: IslandScene['trees'][number]): void {
     tree.chopped = true;
     this.hideTapHint();
+    // On the axe going in, not on the tree landing: the hit is what the player just did, and the
+    // fall takes another second and a half to play out.
+    sfx.play('chop');
 
     // Its topple axis was settled when it was planted — away from whatever it
     // stands around — and the leaning one is already part-way over, so it only
@@ -5215,6 +5279,11 @@ export class IslandScene {
     const restored = this.bridgeRestored;
     if (!restored) return;
 
+    // With the smoke, not in the callback below: that one fires once the smoke has CLEARED, a
+    // second and a half after the span actually appears, which is too late to be the sound of it
+    // being built.
+    sfx.play('bridge');
+
     this.swapUnderSmoke(
       this.bridgeBroken,
       restored,
@@ -5234,6 +5303,10 @@ export class IslandScene {
   private repairBarn(): void {
     const barn = this.barn;
     if (!barn) return;
+
+    // With the smoke, for the same reason the bridge's is: the callback below fires once it has
+    // cleared, which is after the barn is already standing.
+    sfx.play('barn');
 
     this.swapUnderSmoke(
       barn.broken,
@@ -5463,6 +5536,10 @@ export class IslandScene {
     this.breakable.broken = true;
     this.renderer.domElement.style.cursor = '';
     this.hideTapHint();
+
+    // Once for the break, not once per rock: three of them come apart together (see spread),
+    // and three copies of the same crack a frame apart reads as a stutter rather than as stone.
+    sfx.play('stones');
 
     // Debris shares one clone of the rock material — cloned so nothing done to it can
     // touch the rocks still standing. It is NOT faded: the chunks stay on the grass.
