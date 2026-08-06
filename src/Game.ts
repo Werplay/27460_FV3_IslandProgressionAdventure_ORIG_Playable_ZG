@@ -2,7 +2,6 @@ import { sdk } from '@smoud/playable-sdk';
 import * as Phaser from 'phaser';
 import { OverlayScene } from './overlay/OverlayScene';
 import { LoadingScreen } from './overlay/LoadingScreen';
-import { showEndCard } from './overlay/EndCard';
 import { Music } from './audio/Music';
 import { sfx } from './audio/Sfx';
 import { IslandScene } from './scenes/IslandScene';
@@ -43,7 +42,6 @@ export class Game {
   private height: number;
   private paused = false;
   private finished = false;
-  private endCard?: Phaser.Game;
   private music = new Music();
   private loading?: LoadingScreen;
   /** The overlay's own "start thinning" function, held until the island is loaded. */
@@ -92,6 +90,12 @@ export class Game {
       height,
       transparent: true, // let the Three.js canvas show through
       parent: document.body,
+      // No Phaser sound manager, and so no AudioContext: all the audio in this ad is
+      // HTMLAudioElement (Music, Sfx). Phaser opened a context anyway, and destroying this game
+      // on finish CLOSED it — while its own onGameVisible had already queued a suspend() 100ms
+      // out for the return from the store, which then threw "Cannot suspend a closed
+      // AudioContext". Never creating the context is cheaper than chasing the timer.
+      audio: { noAudio: true },
       scale: { mode: Phaser.Scale.NONE, autoCenter: Phaser.Scale.NO_CENTER },
       scene: OverlayScene
     });
@@ -204,7 +208,6 @@ export class Game {
     this.width = width;
     this.height = height;
     this.overlay?.scale.resize(width, height);
-    this.endCard?.scale.resize(width, height);
     this.island?.resize(width, height);
   }
 
@@ -229,27 +232,18 @@ export class Game {
   }
 
   /**
-   * The ad is over: up goes the end card.
+   * The ad is over.
    *
    * This is the SDK's own `finish` event, so it covers both ways in — the player tapping an
-   * upgrade on the expansion beat (IslandScene calls sdk.finish) and the network ending the ad
-   * itself. The 3D layer is torn down a beat LATER, not here: the card fades in over about
-   * 450ms, and dropping the world first leaves a white flash under it.
+   * upgrade on the expansion beat (IslandScene calls sdk.finish, then sdk.install) and the
+   * network ending the ad itself. There is no end card of ours any more: the store opens on
+   * the tap and the network puts its own card up, so the island is LEFT standing rather than
+   * torn down — destroying it would flash white under whatever the network shows.
    */
   public finish(): void {
     if (this.finished) return;
     this.finished = true;
     this.overlay?.destroy(true); // the intro layer has done its job
     this.overlay = undefined;
-    // The track plays ON, under the card. It used to stop here, on the reasoning that the end
-    // card is the network's moment rather than the ad's — but the card is where the player
-    // decides, and cutting to silence at exactly that moment reads as the ad having ended
-    // already. It still stops on pause/destroy, and Music's own retry timer is bounded
-    // (MUSIC.giveUpMs), so nothing is left running loose under the card.
-    this.endCard = showEndCard(this.width, this.height);
-    window.setTimeout(() => {
-      this.island?.destroy();
-      this.island = undefined;
-    }, 1200);
   }
 }

@@ -3773,15 +3773,22 @@ export class IslandScene {
   }
 
   /**
-   * Hand over to the end card. sdk.finish() is what does it — the network puts its own card
-   * up on that event, and Game.finish tears the two layers down underneath it. Guarded
-   * because all three buttons call it and a second finish would be a second handover.
+   * Straight to the store. finish() FIRST, then install() — install on an unfinished ad marks
+   * it finished, emits finish and defers itself through a setTimeout, which breaks the
+   * user-gesture chain and hides mraid.open() from the network validators. Finishing first
+   * keeps the open synchronous inside the tap.
+   *
+   * The row STAYS UP and every tap opens the store: with no end card of ours there is nothing
+   * to replace it with, and a player who comes back from the store to a screen whose buttons
+   * did nothing has been handed a dead ad. Only the finish is once-only — the SDK debounces
+   * install itself (500ms).
    */
   private finishAd(): void {
-    if (this.finishing) return;
-    this.finishing = true;
-    this.clearToolChoice();
-    sdk.finish();
+    if (!this.finishing) {
+      this.finishing = true;
+      sdk.finish();
+    }
+    sdk.install();
   }
 
   /**
