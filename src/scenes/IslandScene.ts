@@ -1245,7 +1245,19 @@ const EXPANSION = {
     portrait: { w: 6.12, h: 12.44 },
     landscape: { w: 8.12, h: 6.6 }
   },
-  ease: 2.4, // slow: this is the reveal, not a cut
+  /**
+   * How long the pull-back takes, in seconds — and it is set by the SOUND.
+   *
+   * camera_zoom_out.mp3 is 0.83s long and starts with the move (see expansionMoment), so 0.8
+   * lands the shot just inside it: the whoosh covers the whole travel and finishes on the wide
+   * frame rather than trailing off over a camera that stopped a second and a half ago.
+   *
+   * It was 2.4 — "slow: this is the reveal, not a cut" — and slow it was, three times the
+   * length of the sound meant to be carrying it. Everything after this hangs off the move
+   * COMPLETING (the line, then EXPANSION.cta.delay, then the buttons), so this takes 1.6s out
+   * of the ending without changing the rhythm of anything that follows it.
+   */
+  ease: 0.8,
   // --- the village ---
   //
   // This is the farm from the shipped Make Marie a Muffin playable, copied EXACTLY: every
@@ -1298,16 +1310,27 @@ const EXPANSION = {
     // Along the world axes, exactly as the four above are — which at yaw 45 is what reads
     // as a diagonal on screen. Each one is a grid line clipped to the band the frame can
     // hold, so a road that would run out of shot simply stops. See the buildings list.
-    { src: roadSrc, at: { x: -16.2, z: -59.98 }, yawDeg: 90, length: 9, width: 1.15 },
-    { src: roadSrc, at: { x: -16.2, z: -50.6 }, yawDeg: 90, length: 28, width: 1.15 },
+    // These four were each a grid line clipped to the frame, and clipped INDEPENDENTLY — so
+    // several of them stopped short of the street they were meant to meet and the town came out
+    // in six disconnected pieces. Run out to their junctions by scratchpad/roads-connect.mjs,
+    // which walks the network and stretches whatever falls short: #4 to reach #9, #5 to reach
+    // #9, #9 down to #4, #10 up to #0. Nothing else moved.
+    { src: roadSrc, at: { x: -14.63, z: -59.98 }, yawDeg: 90, length: 12.13, width: 1.15 },
+    { src: roadSrc, at: { x: -14.04, z: -50.6 }, yawDeg: 90, length: 32.31, width: 1.15 },
     { src: roadSrc, at: { x: 29.3, z: -4.89 }, yawDeg: 90, length: 28, width: 1.15 },
     { src: roadSrc, at: { x: 41.05, z: 7.62 }, yawDeg: 90, length: 29.5, width: 1.15 },
     { src: roadSrc, at: { x: 46.55, z: 16.04 }, yawDeg: 90, length: 23.5, width: 1.15 },
-    { src: roadSrc, at: { x: -9.14, z: -42.75 }, yawDeg: 180, length: 29.5, width: 1.15 },
-    { src: roadSrc, at: { x: 1.54, z: -38.5 }, yawDeg: 180, length: 17, width: 1.15 },
+    { src: roadSrc, at: { x: -9.14, z: -44.28 }, yawDeg: 180, length: 32.55, width: 1.15 },
+    { src: roadSrc, at: { x: 1.54, z: -36.05 }, yawDeg: 180, length: 30.25, width: 1.15 },
     { src: roadSrc, at: { x: 25.21, z: -4.25 }, yawDeg: 180, length: 21.5, width: 1.15 },
     { src: roadSrc, at: { x: 33.45, z: 0 }, yawDeg: 180, length: 30, width: 1.15 },
     { src: roadSrc, at: { x: 55.62, z: 13 }, yawDeg: 180, length: 11, width: 1.15 },
+    // The two spurs that put the ring roads on the network. A ring is a closed loop, so unless
+    // a street actually runs into one it is a circle of road drawn in a field with no way onto
+    // it — which is what both of these were. Each is the shortest line from the ring's edge to
+    // the nearest street, squared off to the axis every other street here runs along.
+    { src: roadSrc, at: { x: -15.38, z: -49.26 }, yawDeg: 180, length: 4.23, width: 1.15 },
+    { src: roadSrc, at: { x: 3.11, z: -33.61 }, yawDeg: 270, length: 4.68, width: 1.15 },
     // Two ring roads. Every other street out here runs along world x or z, which is what
     // makes a grid read as systematic however its spacing is jittered; a curve carries every
     // heading at once. The road model is a straight strip, so a circle is a polygon of short
@@ -5185,7 +5208,9 @@ export class IslandScene {
    * be half empty, and an arrow drops in over each thing still to build.
    */
   private expansionMoment(): void {
-    // On the move starting, so it runs under the whole 2.4s pull-back rather than landing after.
+    // On the move starting, so it runs under the pull-back rather than landing after it. The
+    // two are matched now: the clip is 0.83s and EXPANSION.ease is 0.8, so it covers the travel
+    // exactly instead of the move outlasting it by a second and a half.
     sfx.play('cameraPull');
     this.moveCamera(
       new THREE.Vector3(EXPANSION.centre.x, CAMERA_FOLLOW.aimHeight, EXPANSION.centre.z),

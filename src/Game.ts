@@ -241,8 +241,11 @@ export class Game {
     this.finished = true;
     this.overlay?.destroy(true); // the intro layer has done its job
     this.overlay = undefined;
-    // The end card is the network's moment, not the ad's: the track stops with the gameplay.
-    this.music.stop();
+    // The track plays ON, under the card. It used to stop here, on the reasoning that the end
+    // card is the network's moment rather than the ad's — but the card is where the player
+    // decides, and cutting to silence at exactly that moment reads as the ad having ended
+    // already. It still stops on pause/destroy, and Music's own retry timer is bounded
+    // (MUSIC.giveUpMs), so nothing is left running loose under the card.
     this.endCard = showEndCard(this.width, this.height);
     window.setTimeout(() => {
       this.island?.destroy();
