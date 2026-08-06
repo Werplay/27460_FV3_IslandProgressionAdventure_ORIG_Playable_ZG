@@ -742,8 +742,10 @@ const BRIDGE = {
 };
 
 // Trees on the near bank, back from the water so the pair has somewhere to
-// stand. Verified against the arrival shot: each is at least 1.9u from a
-// character and 3.2u from the next tree, and all three are in frame.
+// stand. Verified against the arrival shot: each is at least 1.5u from a
+// character and 1.6u from the next tree, and all three are in frame.
+// (The note here used to claim 3.2u between trees. The three that shipped were 1.6 to 1.9
+// apart, so that number was never true of them — worth knowing before it is used as a floor.)
 const TREES = {
   height: 1.8, // 2.0x a character, with a canopy 1.5x their height across
   // Offsets from RUN_STOP, so they travel with the rest of the crossing.
@@ -754,10 +756,18 @@ const TREES = {
   // Clearing the rubble in world space is not enough — these are the spots that
   // clear it on SCREEN, checked against all seven rocks and both characters at
   // each end of the run. The band that does is the -z side of the clearing.
+  // Pulled in towards the bridge — 2.42, 3.69 and 3.81 from it, against 2.67, 4.11 and 4.09.
+  //
+  // Not much more is on offer, and the WATER is why: a tree may not stand past x +0.15 of
+  // RUN_STOP or it is in the channel, and the bridge's middle is at +1.60. So no tree can ever
+  // be nearer than about 1.45 in x, and the rest of the distance is whatever z it needs to keep
+  // off the pair. Closing that last bit costs the clearance between a tree and a character,
+  // which came down from 1.9 to 1.5 for this — still a comfortable body's width, and the rule
+  // that actually protects the shot is the canopy one above, not this.
   offsets: [
-    { x: 0.36, z: -2.36 },
-    { x: -1.14, z: -3.06 },
-    { x: 0.56, z: -3.96 }
+    { x: 0.1, z: -1.9 },
+    { x: -1.5, z: -2.0 },
+    { x: 0.1, z: -3.5 }
   ]
 };
 
@@ -4487,7 +4497,11 @@ export class IslandScene {
 
           const box = new THREE.Box3().setFromObject(model);
           const centre = box.getCenter(new THREE.Vector3());
-          model.position.set(-centre.x, -box.min.y - BRIDGE.sink, -centre.z);
+          // Each model beds to its OWN depth — see BRIDGE.sink. The wreck meets the ground with
+          // one post while the repaired span ramps down to it at both ends, so a single number
+          // cannot sit both: whatever beds the wreck buries the deck the pair walks on.
+          const sink = src === bridgeBrokenSrc ? BRIDGE.brokenSink : BRIDGE.sink;
+          model.position.set(-centre.x, -box.min.y - sink, -centre.z);
 
           const pivot = new THREE.Group();
           pivot.add(model);

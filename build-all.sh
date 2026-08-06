@@ -1,43 +1,87 @@
 #!/usr/bin/env bash
 #
-# Build the playable for every supported ad network, concurrently.
+# build-all.sh — Build this playable for every ad network supported by
+# @smoud/playable-scripts. Each network is emitted into its own folder under
+# dist/<network>/ so nothing collides.
 #
 # Usage:
-#   ./build-all.sh                 # build all networks, parallelism = CPU cores
-#   JOBS=4 ./build-all.sh          # cap to 4 parallel builds
-#   ./build-all.sh fb unity google # build only the given networks
+#   ./build-all.sh                 # build every network
+#   ./build-all.sh applovin unity  # build only the listed networks
 #
-# Output:  dist/Blizzard_..._<NETWORK>.{html,zip}
-# Logs:    build-logs/<network>.log  (one per network)
-#
-set -uo pipefail
+set -euo pipefail
+
 cd "$(dirname "$0")"
 
-# Network list: CLI args if given, else the full playable-scripts allow-list.
+# All networks supported by the SDK (see
+# node_modules/@smoud/playable-scripts/core/utils/parseArgvOptions.js).
+ALL_NETWORKS=(
+  preview
+  applovin
+  unity
+  google
+  ironsource
+  facebook
+  moloco
+  adcolony
+  mintegral
+  vungle
+  tapjoy
+  snapchat
+  tiktok
+  appreciate
+  chartboost
+  pangle
+  mytarget
+  liftoff
+  smadex
+  adikteev
+  bigabid
+  inmobi
+)
+
+# Networks that only produce a zip when --zip is passed explicitly.
+ZIP_OPT_IN=(facebook moloco)
+
+# Build the target list from CLI args, or default to every network.
 if [ "$#" -gt 0 ]; then
-  NETWORKS="$*"
+  NETWORKS=("$@")
 else
-  NETWORKS=$(node -e "require('./node_modules/@smoud/playable-scripts/core/utils/parseArgvOptions.js').allowedAdNetworks.forEach(n=>console.log(n))")
+  NETWORKS=("${ALL_NETWORKS[@]}")
 fi
 
-# Parallelism: default to CPU cores (override with JOBS=N).
-JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
+OUT_ROOT="dist"
+FAILED=()
 
-mkdir -p dist build-logs
-count=$(printf '%s\n' $NETWORKS | grep -c .)
-echo "Building $count network(s) with up to $JOBS parallel jobs..."
-start=$(date +%s)
+echo "==> Building ${#NETWORKS[@]} network(s) into ${OUT_ROOT}/"
 
-# Run one `node build.js --network <n>` per network, up to $JOBS at a time.
-# Each writes a uniquely-named file into dist/, so concurrent builds don't clobber each other.
-printf '%s\n' $NETWORKS | xargs -P "$JOBS" -I {} bash -c '
-  n="$1"
-  if node build.js --network "$n" > "build-logs/$n.log" 2>&1; then
-    printf "  %-12s OK\n" "$n"
+for network in "${NETWORKS[@]}"; do
+  out_dir="${OUT_ROOT}/${network}"
+
+  # Add --zip for networks that need the flag to emit a zip package.
+  extra=()
+  for z in "${ZIP_OPT_IN[@]}"; do
+    if [ "$z" = "$network" ]; then
+      extra+=(--zip)
+      break
+    fi
+  done
+
+  echo ""
+  echo "==> [$network] building -> ${out_dir}"
+  rm -rf "$out_dir"
+  if npx playable-scripts build "$network" --out-dir "$out_dir" ${extra[@]+"${extra[@]}"}; then
+    echo "==> [$network] OK"
   else
-    printf "  %-12s FAIL  -> build-logs/%s.log\n" "$n" "$n"
+    echo "==> [$network] FAILED"
+    FAILED+=("$network")
   fi
-' _ {}
+done
 
-echo "------------------------------------------------------------"
-echo "Done in $(( $(date +%s) - start ))s. $(find dist -type f | wc -l | tr -d ' ') file(s) in dist/"
+echo ""
+echo "======================================================================"
+if [ "${#FAILED[@]}" -eq 0 ]; then
+  echo "All ${#NETWORKS[@]} build(s) succeeded. Output in ${OUT_ROOT}/"
+else
+  echo "Completed with ${#FAILED[@]} failure(s): ${FAILED[*]}"
+  exit 1
+fi
