@@ -169,9 +169,42 @@ const FRAME_HEIGHT_RATIO = 0.62;
 
 // The tightest a shot may ever get, in half-width. It is the floor that stops a
 // content-measured frame from closing in on the pair while the camera is merely following.
-// Left where it was when they stood 1.5 apart rather than pulled in with them: it is a
-// floor, and a shot that never reaches it costs nothing.
+// Left where it was when they stood 1.5 apart rather than pulled in with them (they are now
+// 0.75): it is a floor, and a shot that never reaches it costs nothing.
 const FRAME_MIN_WIDTH = 2.1;
+
+// How long the shot takes to tighten onto them once they set off — see travelFrame.
+const TRAVEL_EASE = 0.9;
+
+/**
+ * The shot to hold while they are simply WALKING from one beat to the next — in PORTRAIT. The
+ * caller hands landscape the frame it already had, so nothing about that orientation changes;
+ * see walkToFarm for why it is done as a pair rather than as a branch.
+ *
+ * The camera follows the pair on every leg (followRunners), but the follow only moves what the
+ * camera is POINTED AT — the zoom is left wherever the last beat set it. That is fine when a
+ * beat was framed close, and it is not fine after the cow: her pen has to be held whole, and it
+ * sits three and a half units from where they stand, so that shot is the widest in the ad. It
+ * used to be carried all the way to the farmland, which is a two-and-a-half second walk spent
+ * looking at the pair from the far side of a field.
+ *
+ * So a leg gets its own frame, and it is measured off the thing that is actually in it: the two
+ * of them, and the cow trailing behind. She is the binding one — she keeps COW.joinGap off their
+ * middle, plus the slack she is allowed before she bothers to close it, plus half her own length
+ * to get her tail in, and the follow's own lag (roughly speed * ease) puts the pair a little
+ * ahead of centre, which pushes her that much further back again.
+ *
+ * A function rather than a constant for the usual reason here: COW and CHARACTERS are both
+ * declared further down the file and would still be in their dead zone at this point.
+ */
+function travelFrame(): { w: number; h: number } {
+  const speed = Math.min(...CHARACTERS.map((character) => character.runSpeed));
+  const behind =
+    COW.joinGap + COW.settle + COW.length / 2 + speed * CAMERA_FOLLOW.ease;
+  // ...and never tighter than the floor every other shot is held to.
+  const w = Math.max(FRAME_MIN_WIDTH, behind + 0.35);
+  return { w, h: w * FRAME_HEIGHT_RATIO };
+}
 
 // Portrait-only zoom knob, applied to EVERY beat's frustum (see updateCamera) rather than to
 // one shot's numbers. 1 = hold exactly what the beat asked for; below 1 pulls in, above 1 backs
@@ -200,7 +233,7 @@ const PORTRAIT_ZOOM = 0.92;
  * eighth. The boat was moved down-screen instead (see BOAT.x/z) — it is scenery, and moving
  * the subject is cheaper than zooming out for it.
  *
- * Neither `w` should go below about 1.2: the two of them stand 1.07 apart and one would start to
+ * Neither `w` should go below about 0.9: the two of them stand 0.75 apart and one would start to
  * clip. (FRAME_MIN_WIDTH is the floor for content-measured shots, not for this one.)
  */
 const OPENING_FRAME = {
@@ -304,8 +337,8 @@ const CHARACTERS = [
     // her planted foot slides back 0.737 units over the 0.533s cycle, so this is
     // the speed at which the feet grip the ground instead of skating over it.
     runSpeed: 1.38,
-    x: -30.27,
-    z: -0.28,
+    x: -30.25,
+    z: -0.12,
     yawDeg: 100, // RUBBLE.arcCentreDeg — see the note above
     height: 0.9
   },
@@ -316,8 +349,8 @@ const CHARACTERS = [
     idle: { startFrame: 0, endFrame: 298 },
     run: { startFrame: 299, endFrame: 315 },
     runSpeed: 1.23, // 0.694 units of foot slide over his 0.567s cycle
-    x: -30.13,
-    z: 0.78,
+    x: -30.15,
+    z: 0.62,
     yawDeg: 100, // ...and the same, so the pair face it together
     height: 0.82
   }
@@ -360,8 +393,9 @@ const RUBBLE_BREAK = {
   // of the run. An even count has no exact middle, so this rounds to the nearer.
   index: Math.round((RUBBLE.count - 1) / 2),
   // How many rocks either side of it go with it. 1 = three rocks, which opens
-  // the arc to about 3.2u of clear ground: the pair runs through abreast about a
-  // unit wide, and a single rock's 1.1u gap left one going through each of them.
+  // the arc to about 3.2u of clear ground. The pair is only 0.75 wide now and would clear a
+  // single rock's 1.1u gap, but the three-rock break is what the beat READS as — one rock
+  // popping out of a seven-rock arc barely changes the picture.
   spread: 1,
   // Tap target, as a multiple of the rock's own bounding sphere. A bare mesh hit
   // on something a world unit across is a fiddly target on a phone, so the
@@ -694,7 +728,11 @@ const COW = {
   // longer than she is tall, so framing her as a single point put her rump over the edge
   // of a portrait frame; the shot is fitted to both ends of her instead.
   length: 1.35,
-  offset: { x: 3.5, z: -0.5 }, // from COW_STOP
+  // From COW_STOP. Left at 3.5: bringing the pen in looks like the obvious way to tighten the
+  // cow beat's shot, and it is not — at 2.6 the ring reaches into the lane they walk down to
+  // the farmland, and a character passes through a rock. The framing is fixed in COW_SHOT
+  // instead, which costs nothing on the ground.
+  offset: { x: 3.5, z: -0.5 },
   yawDeg: 250, // turned back towards the pair, so it is looking at them
   // Frame ranges in Cow-Anim2's single 441-frame take, all verified against the
   // converted GLB rather than taken on trust:
@@ -741,35 +779,80 @@ const COW = {
   blend: 0.25 // crossfade between her gaits
 };
 
-// The trees penning it in: a straight LINE running top to bottom of the screen,
-// with the cow standing behind it. The pair arrives from screen-left, so the
-// line is set off to the cow's left and stands between them and her.
-//
-// The line is laid along the ground direction that projects to screen-VERTICAL,
-// which at this camera is not a world axis — see screenAxes below. That is what
-// keeps it a clean vertical bar however the yaw is retuned.
-const COW_TREES = {
-  height: 1.6, // a touch shorter than the wood grove, so the cow clears them
-  count: 4,
-  // Between trunks along the line. This axis runs INTO the screen, and at
-  // VIEW_ELEV_DEG 20 a unit of it is only sin(20) = 0.34 of a unit up the
-  // screen — so ground spacing has to be about three times what it should look
-  // like. 2 puts 0.68 of clear screen between trunks, which is what keeps the
-  // four countable (the beat is four taps) instead of one stacked clump.
-  spacing: 2,
-  // How far the line stands to the cow's screen-LEFT. It has to be between her and the
-  // pair, and it has to miss their screen column: the pair arrives 2.8 units to her
-  // screen-left, so anything from about 1.3 to 4.4 puts a canopy over a character. 1.15 is
-  // on the near side of that window — the line still fences her in, and it clears the
-  // nearer character by 1.3. (At the old 65-degree camera 1.7 was clear; the angle moved.)
-  standoff: 1.15,
-  shift: 0, // slides the whole line up (-) or down (+) the screen, if the cow
-  // ends up level with a trunk rather than a gap
-  // A trunk already down at the foot of the line, leaning on the last tree. It
-  // is what makes the cow read as penned in rather than just standing behind
-  // some trees — and it is NOT one of the four, so freeing her is still four
-  // taps.
-  fallen: { onto: 3, deg: 58 }
+/**
+ * What pens the cow in: a ring of rubble around her, left OPEN on the side the pair arrives
+ * from, with one fallen trunk lying across that opening. Chop the trunk and the way out is
+ * clear — the rocks never move.
+ *
+ * This replaced a straight LINE of four trees she stood behind. The line read as trees she
+ * happened to be behind rather than as a pen, and freeing her was four taps at one prop.
+ * A ring says trapped on sight, and it says it in the scene's own vocabulary: the opening
+ * beat is a semi-circle of the same rubble around the pair, broken open the same way.
+ *
+ * The gap is not a number here — it is worked out from where the pair actually stands (see
+ * cowPen), so moving COW.offset or the crossing swings the opening round to face them instead
+ * of leaving them looking at the closed back of it.
+ */
+const COW_PEN = {
+  // Round the closed part of the ring — 11 across 285deg, a rock about every 28. Set by the
+  // HOLES between them, not by how it looks from any one angle: at 9 the widest gap came out
+  // at 0.53 world units, and a cow is about 0.6 across, so the pen had a place she read as
+  // able to step through. At 11 nothing exceeds 0.25 and the stones overlap enough to read as
+  // piled rather than placed.
+  rocks: 11,
+  radius: 1.75, // from the cow. She is COW.length (1.35) nose to tail, so this is not tight
+  // How wide the way out is, in degrees of the ring — and it is set by the LOG, not by the cow.
+  // She only needs about 0.6 of clearance, so almost any gap lets her out; what the gap cannot
+  // be is wider than the trunk lying across it, or there is a hole at each end and the pen
+  // reads as open. At radius 1.75 this is a 2.13-unit chord against the trunk's 2.47 (see
+  // `log`), which is what lets both ends of it TUCK BEHIND the rocks at the lips rather than
+  // stopping short in mid-air.
+  // 110 was the first try: 3.11 of chord against 1.50 of trunk, blocking less than half of it.
+  gapDeg: 75,
+  size: 0.95, // a rock, before jitter. A shade under the opening arc's, so hers read as smaller
+  // A ring of one rock repeated at one size on one radius reads as beads threaded on a drawn
+  // circle — the opening arc carries a note about exactly this. Three things break it up, and
+  // they are all deliberately small: at these values the ring is still plainly a ring.
+  sizeJitter: 0.22, // ± this fraction of `size`, so no two are the same stone
+  radiusJitter: 0.18, // ± world units in and out
+  // ± this fraction of the angular step, so they are not evenly spaced either. The two rocks at
+  // the LIPS of the gap are exempt and stay exactly on their angles: they frame the way out and
+  // the trunk rests on them, so those two are the ones that have to be placed, not scattered.
+  angleJitter: 0.25,
+  // ± degrees of pitch and roll. Rocks sat perfectly flat on the grass look set down rather
+  // than fallen; a few degrees each way is enough to lose that, and `sink` covers the edge it
+  // lifts (a 0.95 rock tilted 5deg lifts about 0.04, which is under the 0.08 buried).
+  tumbleDeg: 5,
+  sink: 0.08, // fraction of its height buried — deeper than the opening arc's, to cover the tilt
+  /**
+   * The trunk across the opening. It is the ONE thing in the pen that can be chopped, so it is
+   * the whole beat: one tool choice, one tree, the cow walks out.
+   *
+   * It starts part-way over rather than flat. Flat, there is nothing left for the chop to do
+   * and the log simply vanishes when tapped; at `leanDeg` it reads as fallen and propped on the
+   * rocks, and the axe puts it the rest of the way down — chopTree has always taken a tree that
+   * is already part-way over (its `tilt`), it just never had one until now.
+   */
+  log: {
+    // Its own length, not how tall it stands — it is never upright. A leaning trunk covers
+    // height * sin(lean) of GROUND, which is the number that has to match the gap: 2.6 at 72
+    // degrees is 2.47 across, against a 2.13 chord. Longer than anything else on the island
+    // (the wood grove is 1.8) because it is the one tree here whose job is its length.
+    height: 2.6,
+    // How far over it already lies. Not flat: at 90 there is nothing left for the axe to do
+    // and the trunk just vanishes on the tap. At 72 it is plainly down, its raised end at 0.80
+    // — resting on the rock at the far lip rather than hanging over it — and the chop still
+    // has 18 degrees to drop it through, which is what sells the log being cleared rather than
+    // deleted.
+    leanDeg: 72,
+    // Where along the mouth of the gap its BASE sits, as a fraction from one lip to the other,
+    // and it is NEGATIVE: the trunk is longer than the gap is wide, so it starts a little
+    // BEHIND the first rock and finishes a little behind the far one. That overhang is the
+    // whole point — 0.17 tucked under a rock at each end, so the log reads as having come to
+    // rest ON the pen. At 0.03 its base sat inside the first rock and its far end stopped in
+    // mid-air short of the second, which is the arrangement that looked unfinished.
+    from: -0.08
+  }
 };
 
 /**
@@ -786,24 +869,103 @@ function screenAxes(): { down: { x: number; z: number }; right: { x: number; z: 
   };
 }
 
-/** The line, handed back as offsets from COW_STOP like every other placement. */
-function cowTreeOffsets(): Array<{ x: number; z: number }> {
-  const { down, right } = screenAxes();
-  return Array.from({ length: COW_TREES.count }, (_, i) => {
-    // Centred on the cow, so she sits behind the middle of the line rather than
-    // off one end of it.
-    const along = (i - (COW_TREES.count - 1) / 2) * COW_TREES.spacing + COW_TREES.shift;
+/**
+ * The pen, solved rather than written down: the ring of rocks, the two edges of the way out,
+ * and where the trunk lies across it. Everything comes back as offsets from COW_STOP, like
+ * every other placement on this bank.
+ *
+ * The opening faces the PAIR. Their heading in is COW_STOP -> the cow, so the bearing back
+ * from her to them is where the gap has to be, and the rocks take the rest of the ring. Worked
+ * out from those two positions on purpose: the cow has been moved twice already (COW.offset)
+ * and the crossing once, and a hand-written angle would have been left facing whichever way it
+ * was when it was written — with the pair reaching her through solid rock.
+ */
+function cowPen(): {
+  rocks: Array<{ x: number; z: number }>;
+  log: { base: { x: number; z: number }; towards: { x: number; z: number } };
+} {
+  const { radius, rocks: count, gapDeg } = COW_PEN;
+  // Compass bearing (0 = +Z, 90 = +X, clockwise from above) from the cow back to where the pair
+  // pulls up. COW.offset IS the cow's position relative to COW_STOP, so the vector back to them
+  // is just its negation.
+  const toPair = Math.atan2(-COW.offset.x, -COW.offset.z);
+  const gap = THREE.MathUtils.degToRad(gapDeg);
+  const at = (angle: number) => ({
+    x: COW.offset.x + Math.sin(angle) * radius,
+    z: COW.offset.z + Math.cos(angle) * radius
+  });
+
+  // Round the closed part, from one lip of the gap to the other the long way about.
+  const closed = Math.PI * 2 - gap;
+  const rocks = Array.from({ length: count }, (_, i) => {
+    const step = count === 1 ? 0.5 : i / (count - 1);
+    const wobble = (jitter(i, 41) - 0.5) * 2 * COW_PEN.radiusJitter;
+    // The first and last rock ARE the lips of the gap. They stay on their exact angles — the
+    // trunk comes to rest on them and the way out is framed by them — and only the ones
+    // between get shuffled round a little.
+    const lip = i === 0 || i === count - 1;
+    const swing = lip ? 0 : (jitter(i, 43) - 0.5) * 2 * COW_PEN.angleJitter * (closed / (count - 1));
+    const angle = toPair + gap / 2 + closed * step + swing;
     return {
-      x: COW.offset.x - right.x * COW_TREES.standoff + down.x * along,
-      z: COW.offset.z - right.z * COW_TREES.standoff + down.z * along
+      x: COW.offset.x + Math.sin(angle) * (radius + wobble),
+      z: COW.offset.z + Math.cos(angle) * (radius + wobble)
     };
   });
+
+  // The trunk lies from one lip of the gap towards the other, so it is ACROSS the way out
+  // rather than pointing along it. `towards` is what the planting turns it by — see addTrees,
+  // where a tree is laid down along the bearing away from whatever it stands around.
+  const lips = [toPair + gap / 2, toPair - gap / 2].map(at);
+  const from = COW_PEN.log.from;
+  const base = {
+    x: lips[0].x + (lips[1].x - lips[0].x) * from,
+    z: lips[0].z + (lips[1].z - lips[0].z) * from
+  };
+  return { rocks, log: { base, towards: lips[1] } };
 }
 
 // The shot for that beat, solved from the screen bounds of the pair, the trees
 // and the cow — same method as ARRIVAL.
 const COW_SHOT = {
-  margin: 0.5, // air around the pair, the cow and her trees; the zoom is measured
+  /**
+   * Air around everything the beat frames — and on this beat it is what keeps the PAIR off
+   * the edge of the screen, which is not something 0.5 was ever going to manage.
+   *
+   * The shot is centred on the middle of what it holds, so with the pen off to one side the
+   * two characters sit at the far edge of the group and the frame is cut to them exactly. What
+   * is left beside them then works out as
+   *
+   *     PORTRAIT_ZOOM * margin  -  (1 - PORTRAIT_ZOOM) * extent  -  half a character
+   *
+   * — the portrait tightening takes its 8% off the WHOLE frustum, margin included, and a
+   * character is framed as a point with about 0.18 of body either side of it. At margin 0.5
+   * that came to 0.08 world units of air: they were touching the left edge, which is exactly
+   * how it looked. No amount of moving the pen fixes it either, because both terms shrink
+   * together — the ceiling on air with a 0.5 margin is 0.28 however tight the group gets.
+   *
+   * 0.8 puts it at 0.39, and `framedRocks` is what pays for it.
+   */
+  margin: 0.8,
+  /**
+   * How many of the pen's rocks the shot is fitted to, nearest the pair first — NOT all of
+   * them, which is what it used to be.
+   *
+   * The three of them are in direct tension and it is worth writing down: the pen stands 3.5
+   * units from where they pull up, so a frame fitted to the whole ring is fitted to a group
+   * five units wide, and the pair is at one end of it. Holding all 11 rocks AND giving the
+   * pair its air comes out at 2.99 of half-width — noticeably further back than the 2.71 it
+   * was. The 2.71 bought its tightness by cutting the characters off instead.
+   *
+   * Fitting to the near part of the ring breaks the tie. At 8 the frame is 2.70 — the same
+   * zoom as before — with the pair 0.39 clear of the edge instead of 0.08. The three furthest
+   * rocks then overhang by about half a rock, so the back of the pen runs off the side of the
+   * frame, which is what a ring seen from outside does anyway. The cow, the trunk across the
+   * gap and both rocks framing it are always in: they are the beat.
+   *
+   * Lower this for a tighter shot and more of the ring off-screen — 7 gives 2.63, 6 gives 2.48
+   * and takes four rocks fully out of frame, which is where it starts to stop reading as a pen.
+   */
+  framedRocks: 8,
   offset: { x: 2.02, z: -1.61 }, // from COW_STOP; re-solved for the ring
   ease: 1
 };
@@ -821,15 +983,10 @@ const FARM = {
   // freed: down the screen and off to the screen-RIGHT, which puts it past the
   // cow's stand rather than alongside it.
   //
-  // Both numbers are large because that stand runs DOWN the screen (see
-  // COW_TREES) with its fallen trunk at the foot, so clearing it means getting
-  // past the end of a line, not stepping around one prop. The four trees are
-  // felled and gone by the time this beat starts; the trunk is scenery and stays,
-  // so it is what the placement is solved against — these values leave 1.6 world
-  // units between it and the nearest bed, and no bed is closer than 1.6 to
-  // anything. The cost is the walk: about 6.2u, near enough five seconds. Pull
-  // both numbers down together to trade that back (1u of walk per ~0.2 of trunk
-  // clearance, so it goes quickly).
+  // Both numbers are large because the field has to clear the cow's PEN (see COW_PEN), and a
+  // ring is a bigger thing to step around than the line of trees that used to be there. The
+  // trunk across its mouth is chopped and gone by the time this beat starts, but the rocks are
+  // scenery and stay, so the whole ring is what the placement is solved against.
   // Solved to keep the WALK short. This used to be 6.8 / 4.5, which put the field 8.2 units
   // from where the cow was freed and left them running for four and a half seconds between
   // two beats; at 4.25 / -2 it is a 2.2-unit stroll and everything after the bridge sits
@@ -915,7 +1072,23 @@ const BARN = {
   // been set up by the beat before it.
   down: -2.7,
   right: -3.05,
-  ahead: 2.8, // how far short of it they pull up
+  /**
+   * How far short of the barn they pull up — and, since the walk to it is whatever is LEFT
+   * after this is taken off, the thing that decides both where they end up standing and how
+   * far they travel to get there. It is the only knob for either: the barn's own position is
+   * pinned by the stream (see `down`/`right`).
+   *
+   * 2.0 rather than 2.8. At 2.8 they stopped 1.19 clear of the barn's footprint, which put
+   * the last beat's characters a barn's width away from the barn, and left only 0.73 units of
+   * walk to get there — half a second, barely a move. 2.0 stands them 0.39 off it, a fifth of
+   * a unit once their own width is taken off, and doubles the walk to 1.53.
+   *
+   * The floor is 1.6, where the nearer character's centre crosses INTO the footprint. Below
+   * about 1.8 they are touching the wall, so 2.0 is one notch off the wall rather than the
+   * last value that technically fits. Both of them stay down-screen of the barn at this
+   * distance, which is what keeps them in front of it rather than hidden behind it.
+   */
+  ahead: 2.0,
   // Height in world units — but it is the BOUNDING BOX that gets scaled to it, not the
   // building, and for this model those are very different things. Barn.glb carries a
   // weathervane needle 0.007 across that runs from 80.5% of its box to the very top, and
@@ -1375,7 +1548,17 @@ const EXPANSION = {
   // cream. At button size an untextured building still reads as a building; drop the pack's
   // own Buildings.png into assets/images and it can have its atlas back.
   cta: {
-    delay: 0.9, // seconds after the wide shot settles, so the arrows land first
+    // Seconds between the wide shot settling and the buttons arriving — and it is now the
+    // window the LINE gets to itself, since that is said the moment the move lands (see
+    // expansionMoment). 0.9 was enough when nothing was in it; five words need longer than
+    // that, and the bubble spends 0.26 of it springing open. 1.6 leaves about 1.3 of it
+    // readable, which is a comfortable pace for "So much more to build!".
+    delay: 1.6,
+    // What that line is given as its own hold, as a backstop only: showUpgradeChoice clears it
+    // when the buttons land, so on the normal path this never runs out. It is here for the slow
+    // one — the CTA's icons are rendered from models and awaited, and if that takes a while the
+    // line should still have said its piece and gone rather than hanging over the village.
+    hold: 2.6,
     icon: 256, // px each icon is rendered at
     tone: 0xf0e2c0, // what an untextured icon is painted
     // The down arrow over each button, as a fraction of the button
@@ -1525,9 +1708,9 @@ function barnSpots(spots: Array<{ r: number; d: number }>): Array<{ x: number; z
 }
 
 /**
- * The middle of the field. A function rather than a constant for the same reason
- * cowTreeOffsets is one: screenAxes reads VIEW_YAW_DEG, which is declared
- * further down the file and would still be in its dead zone up here.
+ * The middle of the field. A function rather than a constant for the same reason cowPen is
+ * one: screenAxes reads VIEW_YAW_DEG, which is declared further down the file and would still
+ * be in its dead zone up here.
  */
 function farmField(): { x: number; z: number } {
   const { down, right } = screenAxes();
@@ -1875,10 +2058,15 @@ function keepClear(): Array<{ ax: number; az: number; bx: number; bz: number; r:
     lane(RUBBLE_CENTRE, RUN_STOP, 1.6),
     ...TREES.offsets.map((o) => spot(RUN_STOP.x + o.x, RUN_STOP.z + o.z, 1.3)),
     lane({ x: deckEnd, z: BRIDGE.z }, COW_STOP, 1.6),
-    // The cow's clearing: her pen, the stand that fenced her in, the fallen trunk.
+    // The cow's clearing: where the pair stands, and the pen itself. One circle covers the
+    // whole ring — it IS a circle, COW_PEN.radius about her, and the scatter has to stay off
+    // the rocks and off the trunk across the mouth of it alike.
     spot(COW_STOP.x, COW_STOP.z, 2.6),
-    spot(COW_STOP.x + COW.offset.x, COW_STOP.z + COW.offset.z, 2.8),
-    ...cowTreeOffsets().map((o) => spot(COW_STOP.x + o.x, COW_STOP.z + o.z, 1.2)),
+    spot(
+      COW_STOP.x + COW.offset.x,
+      COW_STOP.z + COW.offset.z,
+      COW_PEN.radius + COW_PEN.size + 0.5
+    ),
     // The farmland: the walk out to it, where they stand, and the beds.
     lane(COW_STOP, stop, 1.6),
     spot(stop.x, stop.z, 1.4),
@@ -2555,22 +2743,50 @@ export class IslandScene {
         // Measured once on the source, then reused: every clone is the same
         // model, so only the per-rock jitter has to be worked out in the loop.
         const size = new THREE.Box3().setFromObject(source).getSize(new THREE.Vector3());
-        const baseScale = RUBBLE.size / Math.max(size.x, size.z);
+        const flat = Math.max(size.x, size.z);
 
         const group = new THREE.Group();
         group.name = 'rubble';
 
-        for (let i = 0; i < RUBBLE.count; i++) {
+        /**
+         * One rock, stood on the grass at a world spot. Shared by the arc around the pair and
+         * the ring around the cow, which is the only reason the two look like the same pile of
+         * stone — they are the same model, the same material and the same sink.
+         */
+        const stand = (
+          i: number,
+          spot: { x: number; z: number },
+          target: number,
+          sizeJitter: number,
+          sink: number,
+          tumbleDeg = 0 // pitch and roll off flat. The opening arc takes none — see COW_PEN.
+        ) => {
           const rock = source.clone(true);
-          rock.scale.setScalar(baseScale * (1 + (jitter(i, 1) - 0.5) * 2 * RUBBLE.sizeJitter));
+          rock.scale.setScalar((target / flat) * (1 + (jitter(i, 1) - 0.5) * 2 * sizeJitter));
 
           // Centre the model on its pivot and drop it to the grass, then bury
           // the sink fraction of it. Measured after scaling, like the boat.
           const box = new THREE.Box3().setFromObject(rock);
           const centre = box.getCenter(new THREE.Vector3());
           const height = box.max.y - box.min.y;
-          rock.position.set(-centre.x, -box.min.y - height * RUBBLE.sink, -centre.z);
+          rock.position.set(-centre.x, -box.min.y - height * sink, -centre.z);
 
+          const pivot = new THREE.Group();
+          pivot.add(rock);
+          pivot.position.set(spot.x, 0, spot.z);
+          pivot.rotation.y = jitter(i, 3) * Math.PI * 2; // spun so no two show the same face
+          // ...and tipped off flat. Set on the pivot AFTER the yaw and in YXZ order, so the
+          // tilt is applied in the world's frame rather than about the rock's own spun axes —
+          // otherwise how far a rock leans would depend on which way it happened to be turned.
+          if (tumbleDeg) {
+            pivot.rotation.order = 'YXZ';
+            pivot.rotation.x = THREE.MathUtils.degToRad((jitter(i, 5) - 0.5) * 2 * tumbleDeg);
+            pivot.rotation.z = THREE.MathUtils.degToRad((jitter(i, 7) - 0.5) * 2 * tumbleDeg);
+          }
+          return { pivot, rock };
+        };
+
+        for (let i = 0; i < RUBBLE.count; i++) {
           // Walk the arc from one end to the other, nudging each rock in or out
           // so the seven do not read as beads on a drawn circle.
           const step = RUBBLE.count === 1 ? 0.5 : i / (RUBBLE.count - 1);
@@ -2579,14 +2795,16 @@ export class IslandScene {
           );
           const radius = RUBBLE.radius + (jitter(i, 2) - 0.5) * 2 * RUBBLE.radiusJitter;
 
-          const pivot = new THREE.Group();
-          pivot.add(rock);
-          pivot.position.set(
-            RUBBLE_CENTRE.x + Math.sin(angle) * radius,
-            0,
-            RUBBLE_CENTRE.z + Math.cos(angle) * radius
+          const { pivot, rock } = stand(
+            i,
+            {
+              x: RUBBLE_CENTRE.x + Math.sin(angle) * radius,
+              z: RUBBLE_CENTRE.z + Math.cos(angle) * radius
+            },
+            RUBBLE.size,
+            RUBBLE.sizeJitter,
+            RUBBLE.sink
           );
-          pivot.rotation.y = jitter(i, 3) * Math.PI * 2; // spun so no two show the same face
           group.add(pivot);
           this.rocks.push({ pivot, rock });
 
@@ -2610,6 +2828,23 @@ export class IslandScene {
             this.renderer.domElement.style.cursor = 'pointer';
           }
         }
+
+        // ...and the ring penning the cow in on the far bank, off the same model and the same
+        // material, so the two piles of stone are recognisably the same stone. Scenery, all of
+        // it: nothing here is breakable and nothing here is pushed onto this.rocks, which is
+        // the list the SHATTER walks. The only way out of this ring is the trunk across its
+        // mouth, and that is a tree — see addTrees.
+        cowPen().rocks.forEach((offset, i) => {
+          const { pivot } = stand(
+            i + 50, // past the opening arc's seeds, so the two rings jitter differently
+            { x: COW_STOP.x + offset.x, z: COW_STOP.z + offset.z },
+            COW_PEN.size,
+            COW_PEN.sizeJitter,
+            COW_PEN.sink,
+            COW_PEN.tumbleDeg
+          );
+          group.add(pivot);
+        });
 
         this.scene.add(group);
         // Needs the breakable rock, which only exists now — and the player needs to SEE it
@@ -2946,6 +3181,16 @@ export class IslandScene {
     ]);
     // The icons are awaited, so the ad can be torn down while they render.
     if (!this.running) return;
+
+    // Take the speech bubble down before anything is put over it. It is a SPRITE, drawn inside
+    // the WebGL canvas, and everything below is DOM at zIndex 19 and 20 — so a line still up
+    // when this lands does not compete with the buttons, it goes under the dim and sits there
+    // greyed out until its hold runs out. "So much more to build!" is said as the pull-back
+    // STARTS and holds 5s; the shot takes 2.4 and the CTA waits another 0.9, so it had 1.7s
+    // underneath. Cleared here rather than by shortening that hold, because the hold is also
+    // what covers the slow path: these icons are rendered from models and awaited, and on a
+    // slow device the CTA can arrive well after 5s.
+    this.hideSpeech();
 
     // Dark behind the buttons, under the row but over everything else — the row is at 20 and
     // the end card at 30, so 19 leaves both clear. It takes no pointer events at all: the
@@ -3575,6 +3820,40 @@ export class IslandScene {
   }
 
   /**
+   * Ease the ZOOM and nothing else, leaving what the camera is pointed at alone.
+   *
+   * This exists because moveCamera cannot be used while they are running. It writes
+   * cameraTarget every frame, and so does the follow — and effects are stepped AFTER
+   * driveRunners, so the tween would land last and win, pinning the shot to a fixed point
+   * while the pair walked out of it. Everything a travelling leg wants to change is the
+   * frustum, which the follow never touches, so this changes only that.
+   */
+  private easeFrame(
+    want:
+      | { w: number; h: number }
+      | { portrait: { w: number; h: number }; landscape: { w: number; h: number } },
+    ease: number
+  ): void {
+    // A pair is REMEMBERED, exactly as moveCamera remembers one, so a device turned during the
+    // move — or long after it — re-resolves to the other orientation's box instead of finishing
+    // on the one it started in.
+    this.needFor = 'portrait' in want ? want : undefined;
+    const fromNeed = { ...this.need };
+
+    let elapsed = 0;
+    this.effects.push((delta: number) => {
+      elapsed += delta;
+      const k = THREE.MathUtils.smoothstep(elapsed, 0, ease);
+      // Re-resolved every frame rather than captured once, for the same reason.
+      const need = this.resolveNeed(want);
+      this.need.w = THREE.MathUtils.lerp(fromNeed.w, need.w, k);
+      this.need.h = THREE.MathUtils.lerp(fromNeed.h, need.h, k);
+      this.updateCamera();
+      return elapsed < ease;
+    });
+  }
+
+  /**
    * What a beat has to show, measured off the things themselves.
    *
    * Every subject is given as a ground point and a height; both are projected onto the
@@ -3816,7 +4095,13 @@ export class IslandScene {
           anchor: { x: number; z: number },
           offsets: Array<{ x: number; z: number }>,
           seed: number,
-          fallFrom: { x: number; z: number } // trees topple away from this
+          fallFrom: { x: number; z: number }, // trees topple away from this
+          // How far over it ALREADY is, in degrees. 0 for anything still standing. The cow's
+          // log is planted at COW_PEN.log.leanDeg, and the only thing that has to be true is
+          // that the lean here and the `tilt` recorded below are the same number — chopTree
+          // takes it off the 90 it has to travel, so a mismatch either snaps the trunk upright
+          // on the first frame of the chop or drives it through the ground.
+          leanDeg = 0
         ) => {
           const baseScale = height / size.y;
 
@@ -3847,19 +4132,34 @@ export class IslandScene {
             );
             const axis = new THREE.Vector3(Math.cos(bearing), 0, -Math.sin(bearing)).normalize();
 
+            // Lay it part-way over before anyone sees it, about the same axis the chop will
+            // finish it on. Composed onto the yaw rather than replacing the rotation, exactly
+            // as the topple does — assigning here would throw away the turn given above.
+            const lean = THREE.MathUtils.degToRad(leanDeg);
+            if (lean) {
+              pivot.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, lean));
+            }
+
             // Tap target, sized off the trunk rather than the canopy: a padded
             // canopy on a tree this size would swallow a third of the screen.
+            // Measured AFTER the lean, so a trunk lying across the ground is caught along its
+            // length rather than by the little circle its stump would have had.
             const stood = new THREE.Box3().setFromObject(pivot);
             const spread = stood.getSize(new THREE.Vector3());
             this.trees.push({
               pivot,
-              centre: new THREE.Vector3(pivot.position.x, height * 0.45, pivot.position.z),
+              // Standing, the tap sits at 0.45 of the way up. Leant over, that height is not
+              // where the trunk IS any more — the middle of what it actually occupies is, and
+              // for anything upright that comes back to the same place.
+              centre: lean
+                ? stood.getCenter(new THREE.Vector3())
+                : new THREE.Vector3(pivot.position.x, height * 0.45, pivot.position.z),
               radius: (Math.max(spread.x, spread.z) / 2) * CHOP.hitPadding,
               top: stood.max.y,
               chopped: false,
               grove,
               axis,
-              tilt: 0
+              tilt: lean
             });
           });
         };
@@ -3888,47 +4188,28 @@ export class IslandScene {
           30,
           barn
         );
-        const cowAt = { x: COW_STOP.x + COW.offset.x, z: COW_STOP.z + COW.offset.z };
-        const cowLine = cowTreeOffsets();
-        plant('cow', COW_TREES.height, COW_STOP, cowLine, 10, cowAt);
-
-        // The trunk that is already down: one spacing past the foot of the line,
-        // leaning back on the last tree so it closes that end off. Scenery, not
-        // a target — it stays put once the cow is out, and she comes out around
-        // the other end, so it never gets in her way.
-        const fell = COW_TREES.fallen;
-        const { down } = screenAxes();
-        const foot = cowLine[cowLine.length - 1];
-        const base = {
-          x: COW_STOP.x + foot.x + down.x * COW_TREES.spacing,
-          z: COW_STOP.z + foot.z + down.z * COW_TREES.spacing
+        // The one tree in the cow's pen: the trunk lying across the mouth of it. It is the
+        // whole beat — one tool choice, one chop, and the way out is open — where the four
+        // standing trees it replaced were four of the same tap in a row.
+        //
+        // `fallFrom` is the far lip of the gap MIRRORED through the trunk's own base, because
+        // plant lays a tree down along the bearing AWAY from what it is given. Handing it the
+        // cow would drop the trunk radially outwards, pointing out of the opening instead of
+        // lying across it, and a log parallel to the way out blocks nothing.
+        const pen = cowPen();
+        const across = {
+          x: 2 * pen.log.base.x - pen.log.towards.x,
+          z: 2 * pen.log.base.z - pen.log.towards.z
         };
-        const onto = {
-          x: COW_STOP.x + cowLine[fell.onto].x,
-          z: COW_STOP.z + cowLine[fell.onto].z
-        };
-
-        const trunk = source.clone(true);
-        trunk.scale.setScalar(COW_TREES.height / size.y);
-        const trunkBox = new THREE.Box3().setFromObject(trunk);
-        const trunkMid = trunkBox.getCenter(new THREE.Vector3());
-        trunk.position.set(-trunkMid.x, -trunkBox.min.y, -trunkMid.z);
-
-        const trunkPivot = new THREE.Group();
-        trunkPivot.name = 'fallenTrunk';
-        trunkPivot.add(trunk);
-        trunkPivot.position.set(base.x, 0, base.z);
-        trunkPivot.rotation.y = jitter(20, 22) * Math.PI * 2;
-        // Tipped over towards the tree it came to rest on, composed onto that
-        // yaw so the trunk keeps the face it was turned to.
-        const towards = Math.atan2(onto.x - base.x, onto.z - base.z);
-        trunkPivot.quaternion.premultiply(
-          new THREE.Quaternion().setFromAxisAngle(
-            new THREE.Vector3(Math.cos(towards), 0, -Math.sin(towards)).normalize(),
-            THREE.MathUtils.degToRad(fell.deg)
-          )
+        plant(
+          'cow',
+          COW_PEN.log.height,
+          COW_STOP,
+          [pen.log.base],
+          10,
+          { x: COW_STOP.x + across.x, z: COW_STOP.z + across.z },
+          COW_PEN.log.leanDeg
         );
-        this.scene.add(trunkPivot);
       },
       undefined,
       (err: unknown) => console.error('Tree model failed to load:', err)
@@ -4014,9 +4295,17 @@ export class IslandScene {
     );
   }
 
-  /** They pull up at the stand. The shot opens on it and the trees go live. */
+  /** They pull up at the pen. The shot opens on it and the trunk across it goes live. */
   private meetCow(): void {
-    // The pair, the cow, and the line of trees penning her in.
+    const pen = cowPen();
+    const { right } = screenAxes();
+    // The rocks NEAREST the pair, across the screen, and only COW_SHOT.framedRocks of them.
+    // Fitting the shot to all of them fitted it to a group five units wide with the pair at
+    // one end, which is what put two characters hard against the left edge of a portrait
+    // frame — see COW_SHOT.margin for the arithmetic and framedRocks for the trade.
+    const nearest = [...pen.rocks]
+      .sort((a, b) => a.x * right.x + a.z * right.z - (b.x * right.x + b.z * right.z))
+      .slice(0, COW_SHOT.framedRocks);
     const { target, need } = this.frameOn(
       [
         ...this.pairSubjects(),
@@ -4026,7 +4315,18 @@ export class IslandScene {
           z: COW_STOP.z + COW.offset.z + Math.cos(THREE.MathUtils.degToRad(COW.yawDeg)) * COW.length * end,
           height: COW.height
         })),
-        ...cowTreeOffsets().map((o) => ({ x: COW_STOP.x + o.x, z: COW_STOP.z + o.z, height: COW_TREES.height }))
+        ...nearest.map((o) => ({
+          x: COW_STOP.x + o.x,
+          z: COW_STOP.z + o.z,
+          height: COW_PEN.size * 0.7 // a rock is wider than it is tall
+        })),
+        // The trunk, at both ends: it is lying down, so one point at its base says nothing
+        // about the span it actually covers.
+        ...[pen.log.base, pen.log.towards].map((o) => ({
+          x: COW_STOP.x + o.x,
+          z: COW_STOP.z + o.z,
+          height: COW_PEN.log.height * 0.5
+        }))
       ],
       COW_SHOT.margin
     );
@@ -4035,9 +4335,10 @@ export class IslandScene {
       need,
       COW_SHOT.ease,
       () => {
-        // Timber again, so the axe again — and the hammer is the wrong tool
-        // twice over. It takes the whole line down and the last one felled
-        // frees the cow.
+        // Timber again, so the axe again — and the hammer is the wrong tool twice over, which
+        // is the small joke of the beat now that she is penned in by STONE: the rocks are the
+        // one thing here a hammer would be right for, and they are not what is in her way.
+        // One trunk, one chop, and the way out is open.
         this.showToolChoice([axeSrc, hammerSrc], () => {
           this.fellGrove('cow');
           this.say(SPEECH_LINES.freeCow);
@@ -4840,23 +5141,44 @@ export class IslandScene {
    * be half empty, and an arrow drops in over each thing still to build.
    */
   private expansionMoment(): void {
-    this.say(SPEECH_LINES.expand, 5);
     // On the move starting, so it runs under the whole 2.4s pull-back rather than landing after.
     sfx.play('cameraPull');
     this.moveCamera(
       new THREE.Vector3(EXPANSION.centre.x, CAMERA_FOLLOW.aimHeight, EXPANSION.centre.z),
       EXPANSION.frame,
       EXPANSION.ease,
-      // The three upgrades to choose from. There were also arrows planted over the village
-      // itself, one per opportunity; they are gone — the ones on the buttons are what the
-      // player has to follow, and a second set in the world only competed with them.
-      () => this.wait(EXPANSION.cta.delay, () => void this.showUpgradeChoice())
+      () => {
+        // The line lands on the SETTLED wide shot, not on the move — it is the caption for
+        // what the pull-back just revealed, and said at the start of it the player was reading
+        // words about a thing that had not finished sliding into view. Now: the island opens
+        // out, then the line, then the buttons over the top of it.
+        //
+        // What it must not do is still be up when they arrive. It is a sprite in the WebGL
+        // canvas and the CTA is DOM at zIndex 19 — see showUpgradeChoice, which takes it down.
+        this.say(SPEECH_LINES.expand, EXPANSION.cta.hold);
+        // The three upgrades to choose from. There were also arrows planted over the village
+        // itself, one per opportunity; they are gone — the ones on the buttons are what the
+        // player has to follow, and a second set in the world only competed with them.
+        this.wait(EXPANSION.cta.delay, () => void this.showUpgradeChoice());
+      }
     );
   }
 
   /** Off to the empty plots, down-screen and away from the felled stand. */
   private walkToFarm(): void {
     this.afterRun = () => this.chooseCrop();
+    // Come out of the cow beat's frame as they set off. That shot is the widest in the ad —
+    // it holds a pen standing three and a half units away — and the follow would otherwise
+    // carry it the whole way to the farmland, which is the length of the walk spent looking
+    // at two characters from across a field. See travelFrame.
+    //
+    // PORTRAIT ONLY. Landscape is handed the frame it already has, which is what makes this a
+    // no-op there: the pair is the box for that orientation, so nothing eases and nothing
+    // changes. It still goes through the pair rather than through an `if`, because that is
+    // what survives the phone being turned mid-walk — needFor holds both boxes and resize
+    // re-resolves, so a turn into landscape gives back the wide frame and a turn into portrait
+    // takes it away again.
+    this.easeFrame({ portrait: travelFrame(), landscape: { ...this.need } }, TRAVEL_EASE);
     const { heading, distance } = farmLeg();
     this.actions.forEach((entry) => this.sendRunner(entry, heading, distance));
   }
@@ -5049,7 +5371,7 @@ export class IslandScene {
             .clone()
             .addScaledVector(
               new THREE.Vector3(-axis.z, 0, axis.x).normalize(), // the way it fell
-              CHOP.dustAlong * (tree.grove === 'cow' ? COW_TREES.height : TREES.height)
+              CHOP.dustAlong * (tree.grove === 'cow' ? COW_PEN.log.height : TREES.height)
             );
           this.smoke(along.clone().setY(0.12), CHOP.dust, CHOP.dustFor);
           // ...and the canopy sheds its leaves where it struck the ground.
