@@ -1798,25 +1798,54 @@ const EXPANSION = {
      * second thing to look at, it only stops darkening three that are already there.
      */
     spotlight: {
+      /**
+       * Each hole names the entry it lights, and carries its OWN `lift`, because the three are
+       * not the same height and one shared number put every light above the thing it was for.
+       *
+       * The trap is that `place` scales a prop by its LONGEST axis, not its height, so the
+       * `size`/`height` in the lists below is not what a prop stands at. Each lift here is that
+       * prop's mid-height, measured off the model: maxDim (size x EXPANSION.scale) x the
+       * model's own height/longest ratio, halved.
+       *
+       *   chickenCoop        3.4 x 0.55 x 0.5632 = 1.053 tall -> 0.53
+       *   victorianBarnLvl3  4   x 0.55 x 0.6078 = 1.337      -> 0.67
+       *   truck              1.6 x 0.55 x 0.5278 = 0.464      -> 0.23
+       *
+       * At a flat 1 the truck's hole sat 0.77 above its middle — 0.68 up the screen against a
+       * hole barely that wide — which is the whole of "the light is not on the truck".
+       *
+       * The middle one is the sheep home keyed `victorianBarnLvl3`: it is the sheepHomeSrc
+       * model, the same one the button's icon is rendered from, and it is the sheep home that
+       * is actually STANDING — the entry keyed `sheepHome` at (2.5, -18) is commented out of
+       * the buildings list, so the hole that used to sit there lit bare grass.
+       */
       at: [
-        { x: 11, z: -18.5 }, // the chicken coop
-        { x: 2.5, z: -18 }, // the sheep home
-        { x: 5, z: -21.5 } // the truck
+        { x: 11, z: -18.5, lift: 0.53 }, // chickenCoop
+        { x: 13, z: -29, lift: 0.87 }, // victorianBarnLvl3 — the sheep home model
+        { x: 5, z: -21.5, lift: 0.23 } // the truck idling on the kerb
       ],
       // World units of RADIUS, not pixels: the wide shot is framed in world units and holds a
       // different number of pixels per unit on every screen, so a pixel radius would be a
       // different-sized hole on each one.
       //
-      // 0.95 is set by the two closest of the three, which are 2.01 units apart on screen — the
-      // sheep home and the truck. Two holes merge into one long smear as soon as their edges
-      // touch, so the ceiling is half that distance. 1.7 was the first try and it ran them
-      // together. A building here is about 2 units across, so this lights it and its footprint.
-      radius: 0.95,
+      // Set by the two CLOSEST of the three on screen: two holes merge into one long smear as
+      // soon as their edges touch, so the ceiling is half that distance. That pair is the coop
+      // and the truck at 1.80 apart, so the ceiling is 0.90 and this sits just under it.
+      //
+      // It was 0.95 against 2.01 while every hole shared a flat lift of 1. Giving each its own
+      // mid-height moved them vertically and closed that gap, and at 0.95 those two ran
+      // together into one blob — which reads as the truck's light being off its truck just as
+      // much as the wrong lift did. (The note here used to name the sheep home and the truck as
+      // the close pair; it was the coop and the truck even then.)
+      //
+      // A building is about 2 units across, so 0.85 still lights one and its footprint.
+      // Re-measure whenever a lift, a position or the shot's framing moves.
+      radius: 1.2,
       // How much of that radius is fully clear before it starts feathering back to the dim. A
       // hard edge reads as a cut-out circle laid over the ad; this reads as light falling.
       core: 0.6,
-      // How far up the building the hole is centred, in world units. Aiming at the ground puts
-      // half the light on the grass in front of it — these sit at their own mid-height.
+      // Fallback for an entry that does not carry its own `lift` — work a new one out the way
+      // the note on `at` does rather than taking this number.
       lift: 1,
       /**
        * ...and they come up ONE AT A TIME, in the order the buttons are built above them, so
@@ -1828,7 +1857,7 @@ const EXPANSION = {
        * dim.fade) — a hole opening in a shade that is still arriving is invisible.
        *
        * The growth eases OUT with no overshoot on purpose. `radius` is capped by how close the
-       * two nearest holes sit (see above: half of 2.01 units), and an easeOutBack would push
+       * two nearest holes sit (see above: half of 1.80 units), and an easeOutBack would push
        * past that at the top of the bounce and smear two of them together for a frame.
        */
       sequence: { delay: 0.35, stagger: 0.3, open: 0.28 }
@@ -3509,7 +3538,7 @@ export class IslandScene {
       const ease = k * (2 - k); // easeOutQuad: fast at the top, and never past 1
 
       const world = villageAt(at);
-      point.set(world.x, spotlight.lift, world.z).project(this.camera);
+      point.set(world.x, at.lift ?? spotlight.lift, world.z).project(this.camera);
       const x = (point.x * 0.5 + 0.5) * w;
       const y = (-point.y * 0.5 + 0.5) * h;
       // Opens as light does: the hole widens as it clears, rather than a full-sized circle
