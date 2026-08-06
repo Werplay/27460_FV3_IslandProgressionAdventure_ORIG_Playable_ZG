@@ -47,14 +47,16 @@ const FOG = {
    * middle of the screen as well as travelling into it.
    */
   bloom: { count: 11, size: 0.62, grow: 2.1, alpha: 0.85, spread: 0.72 },
-  cover: 1050, // ms until the screen is solid
-  hold: 180, // ...held while the intro is swapped out behind it
+  cover: 800, // ms until the screen is solid
+  hold: 140, // ...held while the intro is swapped out behind it
   // ...and to thin back out. THE knob for how long the fog takes to go: every delay and every
   // duration in the clear is a multiple of it — the banks, the patches that tear it up and the
   // wisps that outlast them — so this one number scales the whole thing rather than the front
-  // of it. 750 rather than 1100: the clearing takes 0.98s where it took 1.43s, and the last
-  // straggler is gone at 2.67s instead of 3.82s.
-  clear: 750,
+  // of it. It has come down twice, 1100 -> 750 -> 520, and `cover` and `hold` came with it this
+  // time (1050/180 -> 800/140) so the fog is shorter arriving as well as leaving. The whole
+  // transition now runs about 1.8s from the fog's first frame to its last wisp, where it was
+  // 2.7s. Everything below is a multiple of this number, so it is the only one to move.
+  clear: 520,
   /**
    * How the fog LEAVES. It came in as banks travelling from the edges, and sending them back
    * the way they came is what read as two slabs sliding off — the eye follows the hard outer
@@ -139,7 +141,7 @@ const FOG = {
     grid: 0.3,
     size: 0.9,
     jitter: 0.5, // how far off its slot a patch sits, in spacings — kills the grid pattern
-    alpha: 0.92,
+    alpha: 0.4,
     scatter: 0.09,
     grow: 1.7,
     curl: 70
@@ -157,19 +159,21 @@ const FOG = {
   // to ride the reveal (the camera push-in and its whoosh) should start. Not zero: the banks
   // hold for `hold` and their tweens are staggered by up to a quarter of `clear` on top.
   //
-  // It is about a third of `clear` — the clear eases OUT, so the density falls in the first
-  // third of the move rather than the last — and it has to be RE-SCALED whenever that changes,
-  // or the push-in starts against fog that has already gone. 245 is that third of 750, as 360
-  // was of 1100.
-  reveal: 245,
+  // It is a FIXED FRACTION of `clear` — 0.2 of it — and has to be re-scaled whenever that
+  // changes, or the push-in starts against fog that has already gone. The clear eases out, so
+  // the density falls early in the move, which is what lets this sit so near the front: 105 of
+  // 520, as 150 was of 750. (The prose here used to say "about a third" and quote 245, which
+  // the value itself had not agreed with for some time.)
+  reveal: 105,
   // How long BEFORE the video ends the fog starts. The clip keeps playing behind it, so the
   // player never sees it stop: by the time the last frame goes by, the fog is most of the way in
   // and the swap happens inside it. Waiting for the end event instead put a visible beat of
   // finished video on screen — the moment the ad looks like it has two halves.
   //
   // Kept under `cover` on purpose: much more and the fog is solid while there is still video
-  // worth watching underneath it.
-  lead: 800
+  // worth watching underneath it. Held at the same 0.78 of `cover` it has always been as that
+  // came down — 620 of 800, as 800 was of 1050.
+  lead: 620
 };
 
 /**

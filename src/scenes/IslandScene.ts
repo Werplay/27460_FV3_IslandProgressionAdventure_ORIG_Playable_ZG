@@ -84,7 +84,7 @@ import barnBrokenSrc from 'assets/models/B_Barn_Abandoned.glb';
 // and (the trucks) simplified to a quarter of their faces first, because 13k verts
 // each is absurd for props seen once, at distance, for two seconds. The coop is one
 // of the farm's own GLBs, so it is the odd one out at flipY FALSE.
-// The homes. NOT expansion/SheepHome.fbx, which cannot be textured with anything in
+// The homes. NOT expansion/SheepHome.fbx AS A PROP, which cannot be textured with anything in
 // this project: its FBX points at a Buildings.png from the pack it came from, and its
 // UV islands do not line up with our Buildings.jpg — whole wall faces span the atlas's
 // empty black space, so it renders as a black slab under either flipY. Verified in the
@@ -92,6 +92,15 @@ import barnBrokenSrc from 'assets/models/B_Barn_Abandoned.glb';
 // lighting are fine and only the mapping is wrong. Drop that Buildings.png into
 // assets/images and SheepHome can come straight back.
 import homeSrc from 'assets/models/B_Classic_Livinghouse_Filler.glb';
+// ...and it DOES come back as the livestock button's icon, textured off that same atlas — see
+// showUpgradeChoice. Both halves of the note above were checked rather than taken on trust, and
+// neither held: every mesh in the file decodes to sound geometry (no out-of-range indices,
+// median edge 0.08 against a 3.03 box diagonal, normals agreeing with their own triangles), and
+// sampling Buildings.webp at its actual UVs gives tan walls over a green pasture, with less
+// black than the cow shed already has. What was really wrong was the icon camera; see modelIcon.
+// Whether it stands up as a full-size PROP in the village is a separate question — nobody has
+// looked at it at that size — but as a 256px button it is fine.
+import sheepHomeSrc from 'assets/models/SheepHome.glb';
 import truckSrc from 'assets/models/Truck.glb';
 import truckElectricSrc from 'assets/models/Truck_Electric.glb';
 import coopSrc from 'assets/models/B_Chicken_Coop.glb';
@@ -172,6 +181,25 @@ const FIT_RADIUS = 2.45;
 // which is exactly what used to be cropped.
 const FRAME_HEIGHT_RATIO = 0.62;
 
+/**
+ * How far UP the screen every content-measured shot sits, so the characters are not dead centre.
+ *
+ * In world units along the ground direction that projects to screen-DOWN, which at this camera's
+ * elevation is 0.47 of a unit up the screen for every unit of it — so 0.3 here lifts the picture
+ * about 0.14 world units. On a typical beat that is roughly 3% of the frame's height: a nudge,
+ * which is what "slightly" asks for.
+ *
+ * It is NOT free. The zoom is solved with the subjects centred, so this spends margin: whatever
+ * it lifts by comes off the air at the TOP of the frame and is added to the bottom. At 0.3 a
+ * beat with a 0.5 margin still has about 0.19 left over the tallest thing in it once the
+ * portrait tightening has taken its share too, so there is room, but not a lot of it. Raise this
+ * much past 0.4 and the tall subjects — the trees, the barn's cupola — start touching the edge.
+ *
+ * This moves the beats that are framed on their own subjects, which is all of them except the
+ * expansion's wide shot: that one is aimed at a hand-picked point, EXPANSION.centre.
+ */
+const FRAME_LIFT = 0.3;
+
 // The tightest a shot may ever get, in half-width. It is the floor that stops a
 // content-measured frame from closing in on the pair while the camera is merely following.
 // Left where it was when they stood 1.5 apart rather than pulled in with them (they are now
@@ -210,6 +238,37 @@ function travelFrame(): { w: number; h: number } {
   const w = Math.max(FRAME_MIN_WIDTH, behind + 0.35);
   return { w, h: w * FRAME_HEIGHT_RATIO };
 }
+
+/**
+ * Motion blur on the EXPANSION PULL-BACK, and on nothing else.
+ *
+ * It is switched on by expansionMoment for that one move (see there) rather than applied to
+ * every camera move: all of them travel far enough to blur, and blurring all of them made the
+ * ad go soft every time the shot changed. The pull-back is the only one where the speed is the
+ * point — the barn out to the whole island in 0.8s — instead of a way of getting to the next
+ * beat. IslandScene.blurWithMotion measures how hard.
+ *
+ * A CSS filter on the canvas, not a render pass. That buys it for about twenty lines and no
+ * bundle at all, where a real one wants a render target, a fullscreen shader, a colour-space
+ * conversion done by hand and the UI sprites split onto their own layer so the speech does not
+ * smear with the world. The catch is that CSS blurs evenly in every direction: this is a
+ * defocus that ramps with speed, not a smear along the direction of travel.
+ *
+ * `scale` is blur pixels per pixel of picture travelled in a frame, and it is NOT the physical
+ * figure. A real shutter smears by the whole distance travelled, which here would be 0.5 and
+ * peaks this move at 20px — that is not a fast camera, it is a broken one. At 0.12 the pull-back
+ * peaks at 4.8px about a third of the way in, then falls away as the shot eases to a stop,
+ * which it does on its own because the strength is read from the camera rather than scheduled.
+ */
+const MOTION_BLUR = {
+  enabled: true,
+  scale: 0.12,
+  max: 5, // pixels. Past this it stops reading as speed and starts reading as a fault
+  // Below this the filter comes off rather than sitting at a fraction of a pixel. It is what
+  // keeps the very start and the very end of the move — where the easing has the camera barely
+  // crawling — from being softened for no visible gain.
+  min: 0.5
+};
 
 // Portrait-only zoom knob, applied to EVERY beat's frustum (see updateCamera) rather than to
 // one shot's numbers. 1 = hold exactly what the beat asked for; below 1 pulls in, above 1 backs
@@ -344,8 +403,8 @@ const CHARACTERS = [
     // the speed at which the feet grip the ground instead of skating over it.
     runSpeed: 1.38,
     x: -30.25,
-    z: -0.12,
-    yawDeg: 100, // RUBBLE.arcCentreDeg — see the note above
+    z: -1.62,
+    yawDeg: 90, // RUBBLE.arcCentreDeg — they face the way they run, which is at the bridge
     height: 0.9
   },
   {
@@ -356,8 +415,8 @@ const CHARACTERS = [
     run: { startFrame: 299, endFrame: 315 },
     runSpeed: 1.23, // 0.694 units of foot slide over his 0.567s cycle
     x: -30.15,
-    z: 0.62,
-    yawDeg: 100, // ...and the same, so the pair face it together
+    z: -0.92,
+    yawDeg: 90, // ...and the same, so the pair face it together
     height: 0.82
   }
 ];
@@ -375,7 +434,24 @@ const RUBBLE = {
   count: 7,
   radius: 2, // from the midpoint. The two characters sit 0.75 either side of
   // it, so anything under ~1 starts crowding them.
-  arcCentreDeg: 100,
+  /**
+   * ...and it is not only the ring's angle. It is the RUN's heading too — startRunning aims
+   * them along it, RUN_STOP is measured along it, and RUBBLE_BREAK.index picks the rock sitting
+   * on it, which is the one they smash and run through. Those three have to agree or they run
+   * at an unbroken rock.
+   *
+   * 90 rather than 100, which is what puts the pair, the rock they break and the bridge on ONE
+   * straight line. The stream runs down +X, so a heading of 90 is square to it: they stop with
+   * the deck's centre line running exactly between them (0.000 off it, against 0.353 at 100),
+   * looking straight down it, and the sideways shuffle onto the planks drops from about 0.35 to
+   * 0.03. Squaring the run is the only way to get both — at any other heading the bridge can be
+   * dead ahead of them or centred between them, but not both. See BRIDGE.z.
+   *
+   * Nothing in the OPENING moves for it: the pair, the boat and the camera are all where they
+   * were, so that shot is untouched apart from the ring turning 10 degrees on its own centre and
+   * the two of them facing 10 degrees further round (CHARACTERS.yawDeg, which follows this).
+   */
+  arcCentreDeg: 90,
   arcSpanDeg: 180, // 180 is a true semi-circle; 360 would close the ring
   size: 1, // widest horizontal dimension of a rock, in world units, before jitter
   sizeJitter: 0.0, // ± this fraction of size, so the seven are not clones
@@ -519,7 +595,14 @@ const BRAND = {
   // nothing has to tell it when to appear, and it cannot get stuck hidden if a transition hook
   // is missed. Above the 3D canvas (z auto), below the tool row (20), the dim (19) and the end
   // card (30) — the card carries its own logo, and this must never cover a button.
-  zIndex: '9'
+  zIndex: '9',
+  // ...except under the expansion's CALL TO ACTION, where the dim goes over the whole screen
+  // at 19 and took the mark down with it — the one moment in the ad where the brand should be
+  // at its brightest is the one where it was greyed out. Lifted to the row's own level for
+  // that beat only: they never overlap (mark top-right, buttons and title along the bottom),
+  // and it goes back to 9 when the CTA does. It cannot be one static number, because 9 is what
+  // keeps the mark off the opaque intro video on the Phaser layer at 10.
+  ctaZIndex: '20'
 };
 
 // How the characters take off once the way is open.
@@ -546,7 +629,22 @@ const RUN = {
   // they cannot be left running off frame — and everything they run TO (the
   // stream, the bridge, the trees) is placed off this number, so changing it
   // moves the whole crossing with them rather than stranding them short of it.
-  bankMargin: 1.15, // how far short of the water's edge they stop
+  /**
+   * How far short of the WATER'S EDGE they pull up — and what actually matters is how far short
+   * of the PLANKS that leaves them, which is this minus the 0.45 of deck that sits on the bank
+   * (BRIDGE.span 2.6 against a 1.7 channel, half the difference each side).
+   *
+   * 1.15 left a 0.70 gap, and 0.70 does not read as a gap at this camera. The view looks in at
+   * 45 degrees, so standing BACK from the bridge along +X moves them up and to the LEFT on
+   * screen rather than away from it — the pair came out floating off the bridge's shoulder
+   * instead of squared up at its mouth, which is what "not standing at the centre of the
+   * opening" was. They were already dead centre on the deck's axis; it was the distance that
+   * read as an offset.
+   *
+   * 0.75 leaves 0.30 to the planks: close enough to be AT the bridge, far enough not to stand
+   * on a wreck they are supposed to be stuck in front of.
+   */
+  bankMargin: 0.75,
   settle: 0.3 // seconds to blend back down into the idle once they stop
 };
 
@@ -582,13 +680,52 @@ const STREAM = {
 // The bridge over it. Both models span their own Z and carry their railings on
 // ±X, so a 90° yaw is what lays them across the channel.
 const BRIDGE = {
-  z: RUN_STOP.z, // it meets them where they stop
+  /**
+   * On the pair's LINE OF SIGHT, so they pull up looking straight down the deck.
+   *
+   * It used to be RUN_STOP.z — "it meets them where they stop" — which put it level with them
+   * but not in front of them. They run along RUBBLE.arcCentreDeg (100 degrees) while the stream
+   * sits 2 units further along +X, so the bridge bore 90 degrees from where they stopped and
+   * they finished the run facing 10 degrees off it.
+   *
+   * The channel fixes x, so the correction is all in z: step along the heading until x reaches
+   * the stream, which is (STREAM.x - RUN_STOP.x) / tan(heading), or -0.35 here. Written as the
+   * arithmetic rather than as -0.35 because all three of those move — retune the run's heading,
+   * the bank margin or the stream's width and this stays on the sightline instead of quietly
+   * going back to being 10 degrees out.
+   *
+   * It also straightens the crossing: the turn onto the deck was about 10 degrees each and is
+   * now about 5.
+   */
+  z:
+    RUN_STOP.z +
+    (STREAM.x - RUN_STOP.x) / Math.tan(THREE.MathUtils.degToRad(RUBBLE.arcCentreDeg)) + 0.2,
   // Bank to bank, measured across the model's long axis. 2.6 puts the repaired
   // span's railings at 0.62x a character — chest height, where a railing belongs
   // — and leaves 0.45u of deck on each bank. The wreck reads taller than that
   // because of the broken post it throws up, which is the point of it.
   span: 2.6,
-  sink: 0.06, // how far the deck settles into the banks
+  /**
+   * How far each model settles into the banks — and they need DIFFERENT numbers, which is why
+   * this is two knobs and not one.
+   *
+   * The two meet the ground in completely different ways. The repaired span ramps down to it at
+   * both ends (44 and 50 vertices on the grass), so a light bedding is all it wants: at 0.06 its
+   * deck top lands at 0.096, which is what CROSSING.deckY's 0.08 was measured against — that is
+   * the height the characters are lifted to as they walk on. Push it deeper and they walk on
+   * air: at 0.26 the deck is at -0.104 and they cross 0.18 above the planks.
+   *
+   * The WRECK reaches the ground with one post and nothing else — every other piece of its
+   * timber over the banks sits 0.21 to 0.32 up — so bedding it on that post hangs all of its
+   * planks in mid-air, which is what "lifted off the ground" was. It wants 0.26, which puts that
+   * timber down on the grass and buries the post, the right way round for a collapsed bridge.
+   * The pieces reaching over the channel go to -0.26, still clear of the water at -0.4.
+   *
+   * (It was always like that. It only became visible when the pair pulled up 0.4 nearer — the
+   * arrival shot is framed on the pair AND the bridge, so closing that gap zoomed the beat in.)
+   */
+  sink: 0.06,
+  brokenSink: 0.26,
   // The repair is a poof: a ring of smoke bursts over the wreck, the swap
   // happens inside it where nobody can see the seam, and the new span springs
   // out as the smoke thins. Hiding a cut behind a puff is an old trick and it
@@ -1381,6 +1518,12 @@ const EXPANSION = {
     { key: 'cowShed', src: cowShedSrc, at: { x: 14.5, z: -24 }, size: 3.5, yawDeg: 180 },
     { key: 'silo', src: siloSrc, at: { x: 9.7, z: -23.8 }, size: 2.3, yawDeg: 200 },
     { key: 'chickenCoop', src: coopSrc, at: { x: 11, z: -18.5 }, size: 3.4, yawDeg: 0 },
+    // The livestock upgrade, standing on the map so the button has something to point AT —
+    // see EXPANSION.cta.spotlight. Placed by scratchpad/place2.mjs, which searched the town for
+    // a spot that clears every building, prop and road AND stays inside the wide shot in both
+    // orientations: it sits 0.86 clear of the windmill, 3.08 off the nearest road centreline,
+    // and 5.4 from the livestock corner, which is close enough to belong to it.
+    // { key: 'sheepHome', src: sheepHomeSrc, at: { x: 2.5, z: -18 }, size: 4, yawDeg: 0 },
     { key: 'feedMaker', src: feedMakerSrc, at: { x: 9, z: -27 }, size: 2.2, yawDeg: 0 },
     { key: 'farmHouse', src: farmhouseSrc, at: { x: 7.5, z: -24 }, size: 3, yawDeg: 360 },
     { key: 'lamp', src: lampSrc, at: { x: 6.7, z: -22.7 }, size: 1.4, yawDeg: 0 },
@@ -1396,9 +1539,9 @@ const EXPANSION = {
     { key: 'pigHabitatAbandoned', src: pigPenSrc, at: { x: 7, z: -15 }, size: 3.5, yawDeg: 90 },
     { key: 'sawmill', src: sawmillSrc, at: { x: 4, z: -13 }, size: 2.5, yawDeg: 90 },
     { key: 'vanAbandoned', src: vanSrc, at: { x: 16.8, z: -14 }, size: 2, yawDeg: 90 },
-    { key: 'victorianBarnLvl3', src: townBarnSrc, at: { x: 13, z: -29 }, size: 4, yawDeg: 180 },
+    { key: 'victorianBarnLvl3', src: sheepHomeSrc, at: { x: 13, z: -29 }, size: 4, yawDeg: 0 },
     { key: 'wellLv1', src: wellSrc, at: { x: 11, z: -14.5 }, size: 2.5, yawDeg: 180 },
-    { key: 'windmill', src: windmillSrc, at: { x: 7, z: -19 }, size: 3.5, yawDeg: 90 },
+    { key: 'windmill', src: windmillSrc, at: { x: 25, z: -19 }, size: 3.5, yawDeg: 90 },
     { key: 'windChime', src: windChimeSrc, at: { x: 5.5, z: -23.5 }, size: 2, yawDeg: 0 },
     { key: 'flowerKangaroo', src: kangarooSrc, at: { x: 9.4, z: -19.4 }, size: 1.7, yawDeg: -20 },
     { key: 'campTent', src: tentSrc, at: { x: 0.4, z: -23 }, size: 2.3, yawDeg: 180 },
@@ -1635,6 +1778,60 @@ const EXPANSION = {
       enabled: true,
       colour: 'rgba(0, 0, 0, 0.55)',
       fade: 0.45 // seconds, matched to the arrows coming in over it
+    },
+    /**
+     * One instance of each upgrade, left UNDIMMED on the map — so the buttons are not three
+     * pictures of things, they are three places on the island the player can see.
+     *
+     * The dim is one flat layer over everything, so the way to lift something out of it is to
+     * take the dim off that spot rather than to raise the thing: the shade is drawn as a canvas
+     * and these are erased out of it (see paintShade). At full coverage everywhere else, a hole
+     * reads as a spotlight.
+     *
+     * `at` is in VILLAGE space, in the same order the buttons are built, so each hole belongs to
+     * the button above it and the whole set moves if the town does. They are real props — the
+     * chicken coop and the truck were already standing there, and the sheep home was placed for
+     * this (see EXPANSION.buildings).
+     *
+     * There WERE arrows planted over the village once, one per opportunity, and they were pulled
+     * for competing with the arrows on the buttons. This is deliberately not that: it adds no
+     * second thing to look at, it only stops darkening three that are already there.
+     */
+    spotlight: {
+      at: [
+        { x: 11, z: -18.5 }, // the chicken coop
+        { x: 2.5, z: -18 }, // the sheep home
+        { x: 5, z: -21.5 } // the truck
+      ],
+      // World units of RADIUS, not pixels: the wide shot is framed in world units and holds a
+      // different number of pixels per unit on every screen, so a pixel radius would be a
+      // different-sized hole on each one.
+      //
+      // 0.95 is set by the two closest of the three, which are 2.01 units apart on screen — the
+      // sheep home and the truck. Two holes merge into one long smear as soon as their edges
+      // touch, so the ceiling is half that distance. 1.7 was the first try and it ran them
+      // together. A building here is about 2 units across, so this lights it and its footprint.
+      radius: 0.95,
+      // How much of that radius is fully clear before it starts feathering back to the dim. A
+      // hard edge reads as a cut-out circle laid over the ad; this reads as light falling.
+      core: 0.6,
+      // How far up the building the hole is centred, in world units. Aiming at the ground puts
+      // half the light on the grass in front of it — these sit at their own mid-height.
+      lift: 1,
+      /**
+       * ...and they come up ONE AT A TIME, in the order the buttons are built above them, so
+       * each light reads as belonging to the button that shares its place in the row. All three
+       * at once is one event and says nothing about which is which; in sequence, the eye is
+       * walked along the row and out onto the map three times.
+       *
+       * `delay` holds the first one until the dim itself has landed (it fades in over
+       * dim.fade) — a hole opening in a shade that is still arriving is invisible.
+       *
+       * The growth eases OUT with no overshoot on purpose. `radius` is capped by how close the
+       * two nearest holes sit (see above: half of 2.01 units), and an easeOutBack would push
+       * past that at the top of the bounce and smear two of them together for a frame.
+       */
+      sequence: { delay: 0.35, stagger: 0.3, open: 0.28 }
     }
   },
   // --- the ground the village stands on ---
@@ -2315,6 +2512,9 @@ export class IslandScene {
   private speech?: THREE.Sprite; // only ever one, pinned to the top of the frame
   private finishing = false; // the end card is a one-way door — see finishAd
   private ctaShade?: HTMLElement; // the dark layer behind the call to action
+  // Seconds into the spotlights' staggered opening. Infinity means "not in the sequence" — a
+  // resize repaint then draws every hole at full size instead of replaying it.
+  private shadeElapsed = Infinity;
   private brand?: HTMLElement; // the logo in the corner
   private fontReady = false; // see loadFont: the bubbles cannot be drawn until it is
   private begun = false; // has the overlay handed over? see begin()
@@ -2399,6 +2599,15 @@ export class IslandScene {
   public onLoadProgress?: (fraction: number) => void;
   public onLoaded?: () => void;
   private loadedOnce = false;
+
+  /** Where the camera was pointed last frame, and how wide it was — see blurWithMotion. */
+  private lastAim = new THREE.Vector3();
+  private lastHalfW = 0;
+  private blurNow = '';
+  /** Only the expansion pull-back turns this on — see expansionMoment. */
+  private motionBlur = false;
+  /** How many speech bubbles are still drawn, shrinking ones included — see showSpeech. */
+  private speechDrawn = 0;
 
   constructor(width: number, height: number, stage: IslandStage = 'rubble') {
     this.width = width;
@@ -2831,7 +3040,18 @@ export class IslandScene {
           const angle = THREE.MathUtils.degToRad(
             RUBBLE.arcCentreDeg - RUBBLE.arcSpanDeg / 2 + RUBBLE.arcSpanDeg * step
           );
-          const radius = RUBBLE.radius + (jitter(i, 2) - 0.5) * 2 * RUBBLE.radiusJitter;
+          // In or out, but MIRRORED about the rock they break — so the arc is keyed to how far
+          // each rock is from the middle of the run rather than to its own index.
+          //
+          // Keyed to `i`, the two rocks flanking the gap drew different radii (1.946 and 2.028),
+          // and a gap whose two edges stand at different distances is a gap that points slightly
+          // off to one side: it read 2 degrees off the line the pair runs down to the bridge.
+          // Mirroring costs nothing — there are still four different radii across the seven, so
+          // they are no more beads on a drawn circle than they were — and it puts the opening
+          // exactly on that line.
+          const radius =
+            RUBBLE.radius +
+            (jitter(Math.abs(i - RUBBLE_BREAK.index), 2) - 0.5) * 2 * RUBBLE.radiusJitter;
 
           const { pivot, rock } = stand(
             i,
@@ -3107,11 +3327,16 @@ export class IslandScene {
     src: string,
     flip: boolean,
     tint?: number,
-    // Keep ONLY this node out of the file. SheepHome.glb is four of them — the building, a
-    // pasture patch, grass and vegetation — and the vegetation is the tallest thing in it, so
-    // fitting the frame to the whole file put a foliage fan on the button with the barn a
-    // speck beside it.
-    only?: string
+    // Keep ONLY these nodes out of the file, by name, with everything else hidden. SheepHome.glb
+    // is four of them — the building, the pasture it stands on, grass and vegetation — and the
+    // vegetation is the tallest thing in it, so fitting the frame to the whole file put a
+    // foliage fan on the button with the building a speck beside it.
+    //
+    // A LIST rather than one name, because "the sheep home" is two of those nodes: the shed and
+    // the pasture under it. It used to be one name plus a rule that threw out anything called
+    // grass, vegetation or pasture — which is fine until the thing you want IS the pasture.
+    // Naming what to keep says the same thing without a second rule to contradict it.
+    only?: string | string[]
   ): Promise<string> {
     const size = EXPANSION.cta.icon;
     // BOTH awaited before anything is drawn. The first version rendered inside the GLTF
@@ -3132,14 +3357,17 @@ export class IslandScene {
     // node into a scene of its own drops that scale and the mesh renders as a crumpled sheet,
     // which is exactly what the sheep home did.
     if (only) {
-      const keep = model.getObjectByName(only);
-      if (!keep) console.warn(`Icon: no node named ${only} in ${src.slice(0, 30)}`);
+      const names = Array.isArray(only) ? only : [only];
+      const keep = names
+        .map((name) => {
+          const node = model.getObjectByName(name);
+          if (!node) console.warn(`Icon: no node named ${name} in ${src.slice(0, 30)}`);
+          return node;
+        })
+        .filter((node): node is THREE.Object3D => !!node);
       model.traverse((child: THREE.Object3D) => {
-        const wanted =
-          !!keep &&
-          (child === keep || isDescendant(child, keep)) &&
-          !/grass|vegetation|pasture/i.test(child.name);
-        if ((child as THREE.Mesh).isMesh) child.visible = wanted;
+        if (!(child as THREE.Mesh).isMesh) return;
+        child.visible = keep.some((node) => child === node || isDescendant(child, node));
       });
     }
     if (texture) {
@@ -3189,8 +3417,21 @@ export class IslandScene {
     // camera's own right and up. Guessing from the box's width and height (or from a bounding
     // sphere) leaves a wide, shallow building swimming in empty pixels at button size, which
     // is most of why the first icons read as specks.
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-    camera.position.copy(ISO_DIR).multiplyScalar(50);
+    // How far the model reaches from its own middle. It has just been moved onto the origin, so
+    // this is the radius the camera has to stand outside of AND see all the way through.
+    //
+    // Both used to be constants — the camera 50 units out with a far plane at 200 — and that is
+    // a bet on every icon model being a few units across. Three of them are (0.1 to 7). The
+    // sheep home is 748, because its root node is the one without the 0.01 scale the others
+    // carry, so the camera stood INSIDE the building and the far plane cut it off a third of the
+    // way through: what came out was a cross-section, which is exactly the "crumpled sheet" this
+    // file blamed on the mesh for three rounds. The geometry was always fine.
+    //
+    // Nothing is orthographic-safe about a fixed distance either way: the frustum is sized from
+    // the box below, so moving the camera further out costs nothing and clips nothing.
+    const reach = Math.max(box.min.length(), box.max.length()) || 1;
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, reach * 0.01, reach * 4);
+    camera.position.copy(ISO_DIR).multiplyScalar(reach * 2);
     camera.lookAt(0, 0, 0);
     camera.updateMatrixWorld();
     const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
@@ -3227,6 +3468,65 @@ export class IslandScene {
   }
 
   /**
+   * The dim over the wide shot, with a hole burnt through it over each upgrade that is standing
+   * on the map — see EXPANSION.cta.spotlight.
+   *
+   * Drawn rather than styled, and re-drawn on a resize: the holes are world positions projected
+   * through the camera, so they belong to the shot rather than to the screen, and a rotation
+   * moves every one of them.
+   */
+  private paintShade(canvas: HTMLCanvasElement): void {
+    const { dim, spotlight } = EXPANSION.cta;
+    // Half resolution. It is a flat colour with three soft gradients in it — there is nothing in
+    // that worth a full-DPR buffer on a phone, and the CSS box stretches it back over the screen.
+    const w = Math.max(1, Math.round(this.width / 2));
+    const h = Math.max(1, Math.round(this.height / 2));
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return; // no 2D context: the ad goes on without the dim rather than without a CTA
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = dim.colour;
+    ctx.fillRect(0, 0, w, h);
+
+    // Pixels per world unit, taken off the frustum itself so it is right at any zoom or screen.
+    // The camera is orthographic and the canvas matches its aspect, so one number does both axes.
+    const perUnit = w / 2 / ((this.camera.right - this.camera.left) / 2);
+    const radius = spotlight.radius * perUnit;
+    const point = new THREE.Vector3();
+
+    // destination-out: the gradient's ALPHA says how much of the dim to take away, so a solid
+    // middle is a clear hole and the falloff feathers it back into the shade.
+    ctx.globalCompositeOperation = 'destination-out';
+    const { delay, stagger, open } = spotlight.sequence;
+    spotlight.at.forEach((at, i) => {
+      // Where this one is in its own opening, 0 until its turn comes. shadeElapsed starts at
+      // Infinity, so a repaint that is NOT part of the sequence — a resize, which re-projects
+      // every hole — draws them all fully open rather than starting the show again.
+      const k = Math.min((this.shadeElapsed - delay - i * stagger) / open, 1);
+      if (k <= 0) return;
+      const ease = k * (2 - k); // easeOutQuad: fast at the top, and never past 1
+
+      const world = villageAt(at);
+      point.set(world.x, spotlight.lift, world.z).project(this.camera);
+      const x = (point.x * 0.5 + 0.5) * w;
+      const y = (-point.y * 0.5 + 0.5) * h;
+      // Opens as light does: the hole widens as it clears, rather than a full-sized circle
+      // fading up in place.
+      const r = radius * (0.6 + 0.4 * ease);
+      const fade = ctx.createRadialGradient(x, y, r * spotlight.core, x, y, r);
+      fade.addColorStop(0, `rgba(0, 0, 0, ${ease})`);
+      fade.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = fade;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  /**
    * The expansion's call to action: three upgrades, a down arrow bobbing over each, and any
    * tap ends the ad.
    *
@@ -3237,13 +3537,43 @@ export class IslandScene {
     const cta = EXPANSION.cta;
     const icons = await Promise.all([
       this.modelIcon(coopSrc, false),
-      // The livestock house. NOT SheepHome.glb: its geometry comes through this project's
-      // FBX conversion mangled — 1674 verts that render as a crumpled sheet whatever is done
-      // with materials, hiding its pasture and vegetation, or the node's own transform. Its
-      // texture was already known to be unusable (see its import); the shape is too, so it
-      // needs re-exporting before it can be either an icon or a prop. The cow shed is the
-      // nearest thing that renders, and it is already standing in the village.
-      this.modelIcon(cowShedSrc, false),
+      /**
+       * The livestock house — the sheep home itself, which a cow shed stood in for while this
+       * file blamed its geometry: "1674 verts that render as a crumpled sheet". The mesh was
+       * never the problem. It was the icon CAMERA, which stood at a fixed 50 units with its far
+       * plane at 200 — fine for the other three models, which are 0.1 to 7 units across, and
+       * hopeless for this one at 748, where it left the camera inside the building rendering a
+       * slice of it. See modelIcon, where both now come off the model's own size.
+       *
+       * The file was checked rather than argued about: every mesh decodes to sound geometry,
+       * no out-of-range indices, median edge 0.08 of the box diagonal, normals unit-length and
+       * agreeing with their triangles 100% of the time — and the same triangle count as the FBX
+       * it came from.
+       *
+       * It takes the buildings atlas like everything else here, and the note about it being
+       * untexturable — "whole wall faces span the atlas's empty black space, so it renders as a
+       * black slab" — does not survive measuring either. Sampling the atlas at this model's own
+       * UVs gives the walls a warm tan and the pasture a yellow-green, with 16% of the building's
+       * samples landing on black against 25% for the cow shed's own second mesh and 9% for the
+       * coop. It is unremarkable for this atlas. That reading was taken while the camera was
+       * still cutting the model in half, which is the more likely explanation for whatever the
+       * black slab actually was.
+       *
+       * flipY TRUE, which is the rule for anything out of scripts_fbx2glb.mjs and is also what
+       * the atlas says: at TRUE the walls come out tan and the pasture green, at FALSE they come
+       * out muddy brown and a quarter of the building goes black.
+       *
+       * `only` keeps the shed AND the pasture it stands on — the pasture is what makes it read
+       * as livestock rather than as another shed, and it costs 4% of the building's size in
+       * frame to include. It is also what stops the two being one flat colour, which is what
+       * they were while this was tinted: the atlas puts a green field under a tan building.
+       * The grass and the vegetation stay out: the vegetation is the tallest node in the file,
+       * and framing the whole thing put a foliage fan on the button.
+       */
+      this.modelIcon(sheepHomeSrc, true, undefined, [
+        'B_SpringSerenade_Sheep_Home',
+        'B_SpringSerenade_Pasture_Sheep'
+      ]),
       this.modelIcon(truckSrc, true)
     ]);
     // The icons are awaited, so the ad can be torn down while they render.
@@ -3264,22 +3594,43 @@ export class IslandScene {
     // buttons sit above it and would still be tappable, but a dead layer cannot be the thing
     // that swallows a tap, and this row has been through that once already.
     if (dimWanted(EXPANSION.cta.dim.enabled)) {
-      const shade = document.createElement('div');
+      // A CANVAS, not a coloured div, because it has holes in it — one over each upgrade
+      // standing on the map. CSS can mask a div with several radial gradients, but only through
+      // mask-composite, which is spelt differently in WebKit and is exactly the kind of thing to
+      // find out about from a device farm. Erasing out of a 2D canvas works the same everywhere.
+      const shade = document.createElement('canvas');
       Object.assign(shade.style, {
         position: 'fixed',
         top: '0',
         left: '0',
-        right: '0',
-        bottom: '0',
-        background: EXPANSION.cta.dim.colour,
+        width: '100%',
+        height: '100%',
         opacity: '0',
         transition: `opacity ${EXPANSION.cta.dim.fade}s`,
         pointerEvents: 'none',
         zIndex: '19'
       } as CSSStyleDeclaration);
+      // The holes are burnt in one at a time — see spotlight.sequence. Repainted per frame
+      // only while that runs; once the last one is open the effect drops off and the canvas is
+      // left alone until a resize asks for it.
+      const { delay, stagger, open } = EXPANSION.cta.spotlight.sequence;
+      const lit = delay + (EXPANSION.cta.spotlight.at.length - 1) * stagger + open;
+      this.shadeElapsed = 0;
+      this.paintShade(shade);
+      this.effects.push((step: number) => {
+        if (this.ctaShade !== shade) return false; // the CTA went away mid-sequence
+        this.shadeElapsed += step;
+        this.paintShade(shade);
+        if (this.shadeElapsed < lit) return true;
+        this.shadeElapsed = Infinity; // done: later repaints draw every hole open
+        return false;
+      });
       document.body.appendChild(shade);
       requestAnimationFrame(() => (shade.style.opacity = '1'));
       this.ctaShade = shade;
+      // Out from under it — see BRAND.ctaZIndex. Only when the dim is actually up: with the
+      // dim disabled there is nothing to climb over.
+      if (this.brand) this.brand.style.zIndex = BRAND.ctaZIndex;
     }
 
     const title = document.createElement('div');
@@ -3521,6 +3872,7 @@ export class IslandScene {
     const shade = this.ctaShade;
     if (shade) {
       this.ctaShade = undefined;
+      if (this.brand) this.brand.style.zIndex = BRAND.zIndex; // back under the overlay layers
       shade.style.opacity = '0';
       window.setTimeout(() => shade.remove(), EXPANSION.cta.dim.fade * 1000);
     }
@@ -3705,11 +4057,21 @@ export class IslandScene {
       distance: FORWARD.distance
     };
 
+    // Which of them is on which side, measured against THEIR OWN middle rather than against the
+    // bridge's centre line. Those used to be the same point, so comparing with the bridge worked
+    // — and it stopped working the moment the bridge moved onto their sightline (BRIDGE.z),
+    // which slid it 0.35 along the channel and left the nearer of the two just 0.017 from the
+    // line. A hair either way and both of them pick the same lane and walk through each other on
+    // the deck. Their own midpoint cannot drift out from under them like that.
+    const middleZ =
+      this.actions.reduce((sum, entry) => sum + entry.pivot.position.z, 0) /
+      Math.max(this.actions.length, 1);
+
     this.actions.forEach((entry) => {
       const from = entry.pivot.position;
-      // One of them stands each side of the centre line already, so this keeps
+      // One of them stands each side of that middle already, so this keeps
       // whichever side they are on.
-      const side = Math.sign(from.z - BRIDGE.z) || 1;
+      const side = Math.sign(from.z - middleZ) || 1;
       const toX = farX + CROSSING.beyond;
       const toZ = BRIDGE.z + side * CROSSING.lane;
 
@@ -3989,7 +4351,14 @@ export class IslandScene {
       first.z + right.z * midR + down.z * midD
     );
 
-    return { target, need: this.framing(subjects, margin, target) };
+    // Solve the zoom on the CENTRED target, then ride the aim down-screen — in that order, and
+    // that is the whole trick. Shifting the target first does nothing: framing() measures its
+    // extents about whatever it is given, so the frame simply grows on the other side and puts
+    // everything back in the middle. Measuring first and moving after leaves the zoom alone and
+    // slides the picture up the screen.
+    const need = this.framing(subjects, margin, target);
+    target.addScaledVector(new THREE.Vector3(down.x, 0, down.z), FRAME_LIFT);
+    return { target, need };
   }
 
   /**
@@ -4577,8 +4946,15 @@ export class IslandScene {
         this.bridgeRestored!.visible = true;
         this.bridgeRestored!.scale.setScalar(1);
 
+        // Against their own middle, as the real crossing does — and here it was already wrong
+        // before the bridge moved: a skip runs from wherever they are standing, which is their
+        // opening positions, and BOTH of those are on the same side of the bridge's centre line.
+        // Both took side +1 and the skip put them in the same lane, one inside the other.
+        const middleZ =
+          this.actions.reduce((sum, entry) => sum + entry.pivot.position.z, 0) /
+          Math.max(this.actions.length, 1);
         this.actions.forEach(({ pivot }) => {
-          const side = Math.sign(pivot.position.z - BRIDGE.z) || 1;
+          const side = Math.sign(pivot.position.z - middleZ) || 1;
           pivot.position.set(COW_STOP.x, 0, BRIDGE.z + side * CROSSING.lane);
           pivot.rotation.y = THREE.MathUtils.degToRad(FORWARD.headingDeg);
         });
@@ -5017,7 +5393,10 @@ export class IslandScene {
         villageAt(b.at),
         b.size * EXPANSION.scale,
         b.yawDeg,
-        b.src === farmhouseSrc,
+        // flipY, and it is a property of where the model CAME FROM: anything through
+        // scripts_fbx2glb.mjs keeps its FBX's UV orientation, the farm's own GLBs do not.
+        // The farmhouse and the sheep home are the two here from that pipeline.
+        b.src === farmhouseSrc || b.src === sheepHomeSrc,
         undefined,
         b.align
       )
@@ -5212,11 +5591,20 @@ export class IslandScene {
     // two are matched now: the clip is 0.83s and EXPANSION.ease is 0.8, so it covers the travel
     // exactly instead of the move outlasting it by a second and a half.
     sfx.play('cameraPull');
+    // The one move in the ad that gets motion blur. It is the fastest and by far the longest
+    // travel — the barn out to the whole island in 0.8s — and it is the only one where the
+    // speed is the point rather than a way of getting to the next beat. See MOTION_BLUR.
+    this.motionBlur = true;
     this.moveCamera(
       new THREE.Vector3(EXPANSION.centre.x, CAMERA_FOLLOW.aimHeight, EXPANSION.centre.z),
       EXPANSION.frame,
       EXPANSION.ease,
       () => {
+        // Off with the move. The blur has already faded to nothing on its own — it is read from
+        // the camera, which is easing to a stop — so this is only making sure nothing is left
+        // on the canvas afterwards.
+        this.motionBlur = false;
+
         // The line lands on the SETTLED wide shot, not on the move — it is the caption for
         // what the pull-back just revealed, and said at the start of it the player was reading
         // words about a thing that had not finished sliding into view. Now: the island opens
@@ -5861,7 +6249,13 @@ export class IslandScene {
       BARN.repair,
       1,
       () => {
-        this.say(SPEECH_LINES.barnFixed, 4);
+        // Held until just before the shot pulls back, rather than for a flat 4s that ran on
+        // over the whole reveal. Two things were wrong with that: the island opening out is the
+        // one image the ad is selling and it had a caption sitting across the top of it, and
+        // the caption is a sprite INSIDE the canvas, so the motion blur on that move blurred
+        // the words along with the world. Measured off EXPANSION.delay so it stays ahead of the
+        // move if that is retuned; the 0.45 is the bubble's own shrink (SPEECH.pop) and a beat.
+        this.say(SPEECH_LINES.barnFixed, EXPANSION.delay - 0.45);
         // ...and then the shot pulls back off it, which is where the playable ends.
         this.wait(EXPANSION.delay, () => this.expansionMoment());
       }
@@ -5961,6 +6355,10 @@ export class IslandScene {
     sprite.renderOrder = 996; // under the pointing hand, over everything else
     this.scene.add(sprite);
     this.speech = sprite;
+    // Counted, not just referenced. `speech` is cleared the moment a line is REPLACED, while
+    // the sprite it pointed at is still shrinking away for another SPEECH.pop — so it cannot
+    // answer "is there a bubble on the screen", which is what the motion blur has to ask.
+    this.speechDrawn++;
 
     let elapsed = 0;
     let open = 0; // how far the spring got before anything closed it
@@ -6002,6 +6400,7 @@ export class IslandScene {
       sprite.removeFromParent();
       material.dispose();
       texture.dispose();
+      this.speechDrawn--;
       if (this.speech === sprite) this.speech = undefined;
       return false;
     });
@@ -6247,7 +6646,76 @@ export class IslandScene {
     running.forEach((effect) => {
       if (effect(delta)) this.effects.push(effect);
     });
+    this.blurWithMotion(delta);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * Blur the canvas by however fast the camera is moving — on the ONE move that asks for it.
+   *
+   * The strength is measured off the camera rather than written down, so the expansion move can
+   * be retuned and its blur follows; what is not automatic is WHICH move gets it. Every reframe
+   * in the ad travels far enough to blur, and blurring all of them made the whole thing soft
+   * every time the shot changed. expansionMoment switches it on for the pull-back and off at
+   * the end of it, and nothing else ever does.
+   *
+   * The two are one number by the time they reach the screen. A pan of `d` world units across a
+   * frustum `W` wide shifts the picture d/W of a half-screen; a zoom from W to W' does the same
+   * to whatever sits at the edge of it. Both are converted to PIXELS travelled this frame,
+   * which is exactly the length of the smear a real camera would have recorded.
+   *
+   * What this is NOT is a per-pixel directional blur: CSS gives an even blur in all directions,
+   * so this is a defocus scaled by speed rather than a smear along the path. Over 0.8s of a
+   * shot travelling that far it reads as motion; it would not stand up on a slow pan, which is
+   * one more reason it is on that move alone.
+   */
+  private blurWithMotion(delta: number): void {
+    if (!MOTION_BLUR.enabled || delta <= 0) return;
+    // Off unless the expansion pull-back asked for it — and never while there is UI in the
+    // canvas. The speech bubble and the pointing hand are SPRITES in this scene, not DOM, so a
+    // filter on the canvas blurs the words along with the world; a caption running over the
+    // pull-back came out smeared. The line is now timed to clear before the move (see
+    // repairBarn), and this is the backstop that stops it happening again to a bubble nobody
+    // thought about.
+    if (!this.motionBlur || this.speechDrawn > 0 || this.tapHint) {
+      // Whatever the last frame of the move left on the canvas has to come off, and only once —
+      // the guard is the empty string, so this costs one comparison for the rest of the ad.
+      if (this.blurNow !== '') {
+        this.blurNow = '';
+        this.renderer.domElement.style.filter = '';
+      }
+      return;
+    }
+
+    const halfW = (this.camera.right - this.camera.left) / 2;
+    const pixels = this.width / 2; // half the canvas, in the same terms as halfW
+    // Nothing to compare against yet — the first frame, or the first after a resize, which
+    // changes the frustum without the camera having moved at all. Take the reading and wait;
+    // measuring against a zero would blur the opening frame as though it had flown in.
+    if (this.lastHalfW === 0) {
+      this.lastAim.copy(this.cameraTarget);
+      this.lastHalfW = halfW;
+      return;
+    }
+    const moved = this.cameraTarget.distanceTo(this.lastAim) / halfW;
+    // Relative, so a zoom is measured by how much of the frame it swept rather than by world
+    // units — the same 1-unit change is a big move on a tight shot and nothing on a wide one.
+    const zoomed = Math.abs(halfW - this.lastHalfW) / halfW;
+    this.lastAim.copy(this.cameraTarget);
+    this.lastHalfW = halfW;
+
+    // Per frame, then put on a per-second footing and back again at a fixed 60, so the blur is
+    // the same on a phone dropping frames as on one holding 60 — otherwise a slow device, which
+    // travels further per frame, would blur harder for being slow.
+    const travelled = (moved + zoomed) * pixels * (1 / 60 / delta);
+    const blur = Math.min(travelled * MOTION_BLUR.scale, MOTION_BLUR.max);
+    const want = blur < MOTION_BLUR.min ? '' : `blur(${blur.toFixed(2)}px)`;
+    // Only when it changes: assigning a style every frame is a layout invalidation the
+    // compositor does not need, and the value is unchanged for most of the ad.
+    if (want !== this.blurNow) {
+      this.blurNow = want;
+      this.renderer.domElement.style.filter = want;
+    }
   }
 
   public resize(width: number, height: number): void {
@@ -6263,6 +6731,12 @@ export class IslandScene {
       this.need.h = want.h;
     }
     this.updateCamera();
+    // The frustum has just changed size without the camera having gone anywhere. Drop the
+    // motion-blur baseline so the next frame re-reads it instead of billing the rotation as a
+    // zoom and blurring the first frame of the new orientation.
+    this.lastHalfW = 0;
+    // ...and the spotlights are projected world positions, so every one of them has just moved.
+    if (this.ctaShade instanceof HTMLCanvasElement) this.paintShade(this.ctaShade);
   }
 
   public pause(): void {
