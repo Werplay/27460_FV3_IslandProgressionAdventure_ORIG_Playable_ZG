@@ -1,6 +1,7 @@
 import { sdk } from '@smoud/playable-sdk';
 import * as Phaser from 'phaser';
 import { OverlayScene } from './overlay/OverlayScene';
+import { LoadingScreen } from './overlay/LoadingScreen';
 import { showEndCard } from './overlay/EndCard';
 import { Music } from './audio/Music';
 import { sfx } from './audio/Sfx';
@@ -16,10 +17,24 @@ interface PlayableScene {
   introZoom?(): void;
   /** The overlay has finished: start whatever the player is meant to watch. */
   begin?(): void;
+  /** 0..1 while its models and textures decode, and the moment the last of them lands. */
+  onLoadProgress?: (fraction: number) => void;
+  onLoaded?: () => void;
   pause(): void;
   resume(): void;
   destroy(): void;
 }
+
+/**
+ * How long the opening will wait for the island before going anyway.
+ *
+ * Every asset is inlined in this one file, so "loading" is decode and upload rather than
+ * network, and eight seconds is far beyond any device that can run the ad at all. It is here
+ * for the case the arithmetic never completes — a loader that silently drops an item leaves the
+ * queue one short and nothing else would ever release the fog. An ad stuck on its own loading
+ * screen is the one failure that costs the whole impression, so it is worth the four lines.
+ */
+const LOAD_TIMEOUT = 8000;
 
 export class Game {
   private overlay?: Phaser.Game; // absent on a debug start
@@ -30,6 +45,11 @@ export class Game {
   private finished = false;
   private endCard?: Phaser.Game;
   private music = new Music();
+  private loading?: LoadingScreen;
+  /** The overlay's own "start thinning" function, held until the island is loaded. */
+  private releaseFog?: () => void;
+  private loaded = false;
+  private handedOver = false;
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -51,9 +71,18 @@ export class Game {
       return;
     }
 
+    // Up FIRST, before anything that takes time to build: it is what the player looks at while
+    // the island decodes, and a loading screen that appears after the loading has started has
+    // missed the part it was for.
+    this.loading = new LoadingScreen();
+
     // Start the 3D scene right away so it's already rendering (behind the video)
     // by the time the clouds part.
     this.island = new IslandScene(width, height);
+    this.island.onLoadProgress = (fraction) => this.loading?.setProgress(fraction);
+    this.island.onLoaded = () => this.markLoaded();
+    // ...and a floor under it, so a load that never reports finished cannot strand the ad.
+    window.setTimeout(() => this.markLoaded(), LOAD_TIMEOUT);
 
     // Callbacks the overlay scene fires as the transition progresses.
     // Set before boot so the scene can read them in create().
@@ -75,7 +104,14 @@ export class Game {
       // Clouds receded, world on screen: only NOW does the first beat run. The scene has been
       // rendering behind the intro all along, which is what makes the reveal instant, but its
       // opening choice used to be offered while the video still covered it.
-      onDone: () => this.island?.begin?.()
+      onDone: () => this.island?.begin?.(),
+      // The fog is drawn and solid, and hands us the function that thins it. Kept rather than
+      // called: it may arrive before the island has finished loading or after, and handOver is
+      // what puts the two in order — see there.
+      whenReady: (start: () => void) => {
+        this.releaseFog = start;
+        this.handOver();
+      }
     });
 
     // Keep the overlay canvas on top of the Three.js canvas.
@@ -117,6 +153,35 @@ export class Game {
     scene.reveal?.();
     scene.begin?.();
     if (this.paused) scene.pause();
+  }
+
+  /**
+   * Brand off, fog on: the one place the opening's two clocks are put in order.
+   *
+   * Two things have to have happened before the fog may thin, and they finish in either order —
+   * the island's assets have to be in (or to have run out of time), and Phaser has to have booted
+   * far enough to draw the fog and hand back the function that clears it. Whichever lands second
+   * calls this, both are checked, and only then does the loading screen come off.
+   *
+   * The ORDER of the last two steps is the point. The loading screen is faded out first and the
+   * fog released only once it is gone, because those are the only two things covering the island:
+   * releasing the fog first would clear it behind a loading screen still on top, and the player
+   * would meet the world already a second into its first beat.
+   */
+  private markLoaded(): void {
+    this.loaded = true;
+    this.handOver();
+  }
+
+  private handOver(): void {
+    if (this.handedOver || !this.loaded || !this.releaseFog) return;
+    this.handedOver = true;
+
+    const start = this.releaseFog;
+    const loading = this.loading;
+    this.loading = undefined;
+    if (loading) void loading.finish().then(start);
+    else start(); // a debug start builds none
   }
 
   /** Called at full cloud coverage. The scene is already rendering underneath. */

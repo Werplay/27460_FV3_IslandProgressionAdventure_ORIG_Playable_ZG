@@ -156,7 +156,12 @@ class GLTFLoader extends GLTFLoaderBase {
 const ISLAND_SIZE = 64;
 const ISLAND_HEIGHT = 2;
 const ISLAND_HALF = ISLAND_SIZE / 2;
-const FIT_RADIUS = 2.3; // world half-width kept in frame at the opening
+// World half-width kept in frame at the opening. What sets it is the BOAT, the widest thing
+// in the shot: measured off its geometry with the bob at full swing, its screen-left edge
+// reaches 2.209 units from PAN, and portrait's half-width is ALWAYS this number (`h` never
+// binds at any portrait aspect). At 2.3 that left 0.091 — under 4% of the half-width — and
+// the hull read as shaved by the edge. 2.45 leaves 0.241.
+const FIT_RADIUS = 2.45;
 
 // How much a shot has to hold UP AND DOWN against how much it holds ACROSS.
 //
@@ -238,7 +243,7 @@ const PORTRAIT_ZOOM = 0.92;
  */
 const OPENING_FRAME = {
   portrait: { w: FIT_RADIUS, h: FIT_RADIUS * FRAME_HEIGHT_RATIO },
-  landscape: { w: 2.8, h: 2.6 }
+  landscape: { w: 2.8, h: 2.78 }
 };
 
 // The push-in that rides the fog clearing. `from` widens OPENING_FRAME to start on, and the
@@ -246,9 +251,10 @@ const OPENING_FRAME = {
 // rather than on a second copy of those numbers.
 //
 // `ease` is matched to the two things it runs against: camera_zoom_in is 0.9s long, and the
-// last of the fog is gone about 1s after this starts (OverlayScene fires it FOG.reveal into
-// the clear). 1.2 lands the shot just after both, so the sound covers the move instead of
-// finishing under a camera still travelling.
+// fog is gone about 0.7s after this starts (OverlayScene fires it FOG.reveal into the clear).
+// 1.2 lands the shot just after both, so the sound covers the move instead of finishing under
+// a camera still travelling. The SOUND is what binds it now — the fog used to be the longer of
+// the two and was cut to 750 (FOG.clear) — so shortening the fog again does not shorten this.
 const INTRO_ZOOM = { from: 1.55, ease: 1.2 };
 
 // Lighting, taken from the reference playable (its ThreeSceneManager.addLights).
@@ -2363,9 +2369,18 @@ export class IslandScene {
   // from a box belonging to the orientation the player had left.
   private needFor?: { portrait: { w: number; h: number }; landscape: { w: number; h: number } };
 
+  /**
+   * How the loading screen is told what is happening. Set by Game right after this is built —
+   * which is soon enough, because nothing here can call back before the current task ends.
+   */
+  public onLoadProgress?: (fraction: number) => void;
+  public onLoaded?: () => void;
+  private loadedOnce = false;
+
   constructor(width: number, height: number, stage: IslandStage = 'rubble') {
     this.width = width;
     this.height = height;
+    this.watchLoading();
     // The opening is framed per orientation, through the same machinery as the expansion's
     // reveal: keep the pair and resolve it against the screen. A device rotated during the
     // rubble beat then re-frames on its own, and resize() needs no special case for it.
@@ -2968,6 +2983,35 @@ export class IslandScene {
    * Bring the typeface in. Resolves `fontReady` either way — if the face fails to load, the
    * stack's fallbacks are perfectly readable and a playable that never draws its speech is not.
    */
+  /**
+   * Report how far the models and textures have got, for the loading screen to draw.
+   *
+   * Hooked onto THREE's DefaultLoadingManager rather than a manager of our own, and that is the
+   * whole trick: every loader in this file is built without a manager argument, and THREE.Loader
+   * falls back to the default one when it gets none. So all fourteen GLTFLoader sites and every
+   * TextureLoader are already reporting to it — there is nothing to thread through and no
+   * fifteenth site that can forget to.
+   *
+   * `onLoad` fires whenever the queue empties, which is NOT only at the end: the button icons
+   * are rendered from models long afterwards and would empty it a second time. Only the first
+   * one is the opening, so the rest are dropped.
+   */
+  private watchLoading(): void {
+    const manager = THREE.DefaultLoadingManager;
+    manager.onProgress = (_url: string, loaded: number, total: number) => {
+      this.onLoadProgress?.(total > 0 ? loaded / total : 0);
+    };
+    manager.onLoad = () => {
+      if (this.loadedOnce) return;
+      this.loadedOnce = true;
+      this.onLoaded?.();
+    };
+    // A file that fails is still a file that is not coming. Nothing here can be retried and the
+    // ad must open regardless, so an error counts as done rather than leaving the queue one
+    // short and the loading screen up for the timeout to rescue.
+    manager.onError = (url: string) => console.error('Failed to load', url);
+  }
+
   private loadFont(): void {
     if (typeof FontFace === 'undefined') {
       this.fontReady = true;
@@ -5366,6 +5410,10 @@ export class IslandScene {
 
         if (!landed) {
           landed = true;
+          // The trunk hitting the grass. Fired HERE rather than off a timer set when the chop
+          // started, so it stays with the impact whatever CHOP.fall is retuned to — and in the
+          // same branch as the dust and the leaves, because all three are the one event.
+          sfx.play('treeLand');
           // Dust, thrown up along the length of the trunk where it hit.
           const along = tree.pivot.position
             .clone()

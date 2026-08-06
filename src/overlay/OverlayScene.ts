@@ -49,7 +49,12 @@ const FOG = {
   bloom: { count: 11, size: 0.62, grow: 2.1, alpha: 0.85, spread: 0.72 },
   cover: 1050, // ms until the screen is solid
   hold: 180, // ...held while the intro is swapped out behind it
-  clear: 1100, // ...and to thin back out
+  // ...and to thin back out. THE knob for how long the fog takes to go: every delay and every
+  // duration in the clear is a multiple of it — the banks, the patches that tear it up and the
+  // wisps that outlast them — so this one number scales the whole thing rather than the front
+  // of it. 750 rather than 1100: the clearing takes 0.98s where it took 1.43s, and the last
+  // straggler is gone at 2.67s instead of 3.82s.
+  clear: 750,
   /**
    * How the fog LEAVES. It came in as banks travelling from the edges, and sending them back
    * the way they came is what read as two slabs sliding off — the eye follows the hard outer
@@ -90,8 +95,11 @@ const FOG = {
     grow: 1.55,
     vary: 0.35,
     wind: { x: 0.05, y: -0.11 },
-    linger: 1.5,
-    lingerDelay: 0.45,
+    // Pulled in with `clear`, and by more than it: at 1.5 and 0.45 the last wisp was still
+    // fading a full second after the game had started, which is most of what "the fog takes
+    // too long" actually was — the mass had gone and the screen still had fog on it.
+    linger: 1.2,
+    lingerDelay: 0.3,
     curl: 26,
     ripple: 0.12,
     // How far into the clear the BANKS are gone. They hand over to the patches (FOG.tear) at
@@ -136,16 +144,24 @@ const FOG = {
     grow: 1.7,
     curl: 70
   },
-  // How long the fog sits there before clearing when there is NO video (WITH_VIDEO false). It is
-  // the only cover the scene's models get, so it is a load budget as much as a beat.
-  soloHold: 1400,
+  // How long the fog sits there before clearing when there is NO video (WITH_VIDEO false).
+  //
+  // It used to be a LOAD BUDGET as well as a beat — a guess at how long the island needs to
+  // decode, with a slow device that took longer showing a half-built one. It is not a guess any
+  // more: the loading screen waits on the loader itself and the fog is not released until that
+  // has gone (see OverlayHooks.whenReady), so all this has left to do is give the fog a beat of
+  // its own between the brand coming off and the world coming through. Safe to tune for looks
+  // now — it is no longer holding anything up.
+  soloHold: 0,
   // How far into that thinning the world is actually LEGIBLE, and so the moment anything meant
   // to ride the reveal (the camera push-in and its whoosh) should start. Not zero: the banks
   // hold for `hold` and their tweens are staggered by up to a quarter of `clear` on top.
-  // 360 rather than the old 520 because the clear now eases OUT — the density falls in the
-  // first third of the move instead of the last, so the world shows through that much sooner
-  // and a push-in on the old number started against fog that had already gone.
-  reveal: 360,
+  //
+  // It is about a third of `clear` — the clear eases OUT, so the density falls in the first
+  // third of the move rather than the last — and it has to be RE-SCALED whenever that changes,
+  // or the push-in starts against fog that has already gone. 245 is that third of 750, as 360
+  // was of 1100.
+  reveal: 245,
   // How long BEFORE the video ends the fog starts. The clip keeps playing behind it, so the
   // player never sees it stop: by the time the last frame goes by, the fog is most of the way in
   // and the swap happens inside it. Waiting for the end event instead put a visible beat of
@@ -165,8 +181,9 @@ const FOG = {
  * The second is the cheaper and faster of the two — it drops assets/videos/intro.mp4, 313 KB
  * on disk and about 420 KB inlined, and puts the player in the game a good six seconds sooner.
  * What it gives up is the loading cover: with the video there, the 3D scene had seven seconds to
- * fetch and decode its models behind it. Fog-only has FOG.soloHold, so if a slow device shows a
- * half-built island on the reveal, that number is the first thing to raise.
+ * fetch and decode its models behind it. Fog-only has the LOADING SCREEN instead, which covers
+ * for exactly as long as the loading actually takes rather than for a number somebody guessed —
+ * so a slow device no longer reveals a half-built island, it just shows the bar for longer.
  *
  * With this false, delete the intro.mp4 import below as well — an unused asset import may still
  * be inlined, and the saving is the whole point.
@@ -193,6 +210,16 @@ interface OverlayHooks {
   onCovered: () => void; // full coverage — swap intro -> 3D scene
   onClearing: () => void; // fog thinning and the world showing through — see FOG.reveal
   onDone: () => void; // clouds receded — overlay finished
+  /**
+   * The fog is drawn and solid; hand back the moment it may thin.
+   *
+   * This is the no-video opening's only clock, and it belongs to the COORDINATOR rather than to
+   * a number in here, because what it is waiting for is the island finishing loading and the
+   * loading screen coming off the top of it. Handing the start function out — rather than
+   * asking whether it is time — means the fog cannot begin clearing before whoever is covering
+   * it has gone, whichever of the two is ready first.
+   */
+  whenReady: (start: () => void) => void;
 }
 
 export class OverlayScene extends Phaser.Scene {
@@ -399,13 +426,20 @@ export class OverlayScene extends Phaser.Scene {
     this.skip?.destroy();
     this.skip = undefined;
 
-    // No usable fog: hand over immediately rather than leaving a hole where the transition was.
+    // No usable fog: hand over rather than leaving a hole where the transition was. Still
+    // through whenReady on the fog-only opening — there is no fog to cover the island now, so
+    // the loading screen is the ONLY thing covering it, and starting the game under that would
+    // play the first beat where nobody can see it.
     if (!this.fogReady()) {
-      this.hooks.onCovered();
-      this.video?.destroy();
-      this.video = undefined;
-      this.hooks.onClearing();
-      this.hooks.onDone();
+      const handOver = (): void => {
+        this.hooks.onCovered();
+        this.video?.destroy();
+        this.video = undefined;
+        this.hooks.onClearing();
+        this.hooks.onDone();
+      };
+      if (alreadyThere) this.hooks.whenReady(handOver);
+      else handOver();
       return;
     }
 
@@ -515,7 +549,11 @@ export class OverlayScene extends Phaser.Scene {
 
     // Fired off a timer rather than a tween's onComplete: with a dozen tweens on their own
     // clocks, "covered" is when the LAST of them has landed.
-    this.time.delayedCall(last, () => {
+    //
+    // On the no-video opening the fog is already at full cover on this frame, so `last` is 0 and
+    // there is nothing to wait for HERE — what it waits for instead is the coordinator saying
+    // the island is loaded and the loading screen has gone. See OverlayHooks.whenReady.
+    const covered = () => {
       this.fogPhase = 'clear';
       this.hooks.onCovered();
       this.video?.destroy();
@@ -591,7 +629,12 @@ export class OverlayScene extends Phaser.Scene {
         this.fog.forEach(({ image }) => image.destroy());
         this.fog = [];
       });
-    });
+    };
+
+    // The video opening runs on its own clock — the fog is still travelling in and `last` is
+    // when it lands. Only the fog-only opening waits on the coordinator.
+    if (alreadyThere) this.hooks.whenReady(covered);
+    else this.time.delayedCall(last, covered);
   }
 
   /**

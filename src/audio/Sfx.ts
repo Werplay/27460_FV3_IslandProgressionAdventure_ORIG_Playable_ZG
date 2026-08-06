@@ -18,6 +18,7 @@ import cowSrc from 'assets/audio/cow_happy_02.mp3';
 import bridgeSrc from 'assets/audio/select_bridge.mp3';
 import barnSrc from 'assets/audio/select_barn.mp3';
 import cropSrc from 'assets/audio/crop_fly_02.mp3';
+import treeLandSrc from 'assets/audio/crop_hit_ground_02.mp3';
 import zoomSrc from 'assets/audio/camera_zoom_in.mp3';
 import pullSrc from 'assets/audio/camera_zoom_out.mp3';
 
@@ -27,7 +28,17 @@ const SFX = {
   // Once per TREE, and a grove goes down one tree every CHOP.stagger — which is what the pool
   // above is for: on a single element the second chop would cut the first one off.
   chop: { src: chopSrc, volume: 0.1 },
-  cow: { src: cowSrc, volume: 0.1 },
+  // The other half of a chop: `chop` is the axe going in, this is the trunk landing CHOP.fall
+  // (0.7s) later. Two sounds for one tap, which is the point — the tap is answered at once and
+  // the fall gets its own weight at the end of it.
+  //
+  // It is the ONE effect here that is not fired BY a tap; it comes off the topple finishing.
+  // That is fine for the autoplay policy — the tap that started the fall is the gesture — but
+  // it does mean several can be in the air at once when the axe takes a whole stand. They land
+  // CHOP.stagger (0.35s) apart against a clip 0.16s long, so in practice they never overlap;
+  // the pool is there for the case where they do.
+  treeLand: { src: treeLandSrc, volume: 0.1 },
+  cow: { src: cowSrc, volume: 0.2 },
   bridge: { src: bridgeSrc, volume: 0.1 },
   barn: { src: barnSrc, volume: 0.1 },
   crop: { src: cropSrc, volume: 0.1 },
