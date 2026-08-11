@@ -25,7 +25,7 @@ export const DEBUG_CONFIG = {
 
   debugStart: false,
   scene: 'island' as DebugScene,
-  stage: 'farm' as IslandStage
+  stage: ' barn' as IslandStage
 };
 
 

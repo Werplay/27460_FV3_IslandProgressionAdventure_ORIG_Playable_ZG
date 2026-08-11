@@ -586,6 +586,10 @@ const TOOL_SWING = {
   // Grit, thrown off every blow at the spot it lands on. The stone's break throws its own on
   // top of the last one (RUBBLE_BREAK.dust), which is several times this.
   chip: { puffs: 3, size: 0.22, spread: 0.18, rise: 0.25 },
+  // How much of the frame's half-width counts as OFF it, for the check that decides which side
+  // of a target the hand may stand on (swingTool's `held`). 0.04 is a couple of percent of the
+  // screen — enough that the tool is plainly inside the picture rather than shaved by it.
+  edge: 0.04,
   chipFor: 0.35, // seconds it hangs
   /**
    * The two blows the hammer puts in, one per ROCK — the tapped one and the neighbour that
@@ -7192,7 +7196,8 @@ export class IslandScene {
       return lead;
     };
 
-    const blows = stations.map((spec) => {
+    /** One blow, laid out for a given side. `side` is not read off the spec: see below. */
+    const forge = (spec: (typeof stations)[number], side: 1 | -1) => {
       const handle = THREE.MathUtils.degToRad(spec.handleDeg);
       // Where THIS blow lands, offset across and down the frame from what it is aimed at.
       const at = spec.at
@@ -7204,8 +7209,8 @@ export class IslandScene {
       // whatever leads, turned to the angle the blow lands at. A blow from the other side is
       // the tool turned over, so the pose AND the search for what leads are both taken at
       // that roll — see leading.
-      const angle = spec.side * handle;
-      const lead = leading(angle, spec.side);
+      const angle = side * handle;
+      const lead = leading(angle, side);
       const sin = Math.sin(angle);
       const cos = Math.cos(angle);
       return {
@@ -7215,14 +7220,56 @@ export class IslandScene {
         // Turned over in the hand for a blow from the right. Rolled about the handle rather
         // than swung round in the frame: a tool spun 180 in its own plane has its CLAW or its
         // poll underneath, which is the one thing this rig exists to prevent.
-        roll: spec.side > 0 ? 0 : Math.PI,
+        roll: side > 0 ? 0 : Math.PI,
         // Cocked back off its own landing angle, up and over the shoulder it swings from.
-        raised: angle + spec.side * THREE.MathUtils.degToRad(TOOL_SWING.raiseDeg),
+        raised: angle + side * THREE.MathUtils.degToRad(TOOL_SWING.raiseDeg),
         grip: at
           .clone()
           .addScaledVector(right, -(lead.x * cos - lead.y * sin))
           .addScaledVector(up, -(lead.x * sin + lead.y * cos))
       };
+    };
+
+    /**
+     * Is the hand on screen there — cocked and lifted as well as landed? Asked of the CAMERA
+     * rather than of a number, because the answer is different on every device: the shot is
+     * solved from what it has to show against the screen's aspect, so a portrait phone holds a
+     * far narrower slice of the world than a landscape one at the same beat.
+     */
+    // How far the tool reaches from the hand, measured off its own vertices rather than
+    // written down: it is TOOLS[name].length, but only because that is what the model was
+    // scaled to, and this cannot go stale.
+    let reach = 0;
+    for (let i = 0; i < points.length; i += 2) reach = Math.max(reach, Math.abs(points[i]));
+
+    const held = (grip: THREE.Vector3, raised: number) => {
+      const arc = new THREE.Vector3()
+        .copy(grip)
+        .addScaledVector(right, Math.cos(raised) * reach)
+        .addScaledVector(up, Math.sin(raised) * reach);
+      return [grip, grip.clone().addScaledVector(lift, TOOL_SWING.carry), arc].every(
+        (p) => Math.abs(p.clone().project(this.camera).x) < 1 - TOOL_SWING.edge
+      );
+    };
+
+    /**
+     * Which side of the target the hand stands on. `side` in a station is a PREFERENCE — it is
+     * what makes a stand read as three different swings rather than one swing three times —
+     * and the frame overrules it: a tree on the screen-left edge of a portrait shot has no room
+     * on its left for a hand and a raised axe, and the last of the barn's three is exactly
+     * there. Flipped only if flipping helps, so a target with no room either side keeps the
+     * swing it was given rather than being turned over for nothing.
+     */
+    const blows = stations.map((spec) => {
+      const first = forge(spec, spec.side);
+      if (held(first.grip, first.raised)) return first;
+      const other = forge(spec, (spec.side > 0 ? -1 : 1) as 1 | -1);
+      if (held(other.grip, other.raised)) return other;
+      // Neither side fits, so the target itself is too close to the edge of the shot for the
+      // tool to be swung at it at all. Nothing here can fix that — it is a placement (a tree's
+      // r/d, a frame's margin) — so say so rather than quietly playing it half off screen.
+      console.warn('swingTool: no room either side of a target — it is against the frame edge');
+      return first;
     });
 
     // Towards the viewer, so the tool is drawn OVER what it is working on rather than inside
