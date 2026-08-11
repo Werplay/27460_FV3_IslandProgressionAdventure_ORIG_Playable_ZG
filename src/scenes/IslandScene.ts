@@ -27,6 +27,10 @@ import merryTextureSrc from 'assets/images/C_Merryweather_Classic.webp';
 import hipsterSrc from 'assets/models/Hipster-Anim.glb';
 import hipsterTextureSrc from 'assets/images/C_Hipster_Classic.jpg';
 import rubbleSrc from 'assets/models/Rubble_Rock_gray.glb';
+// ...and the tools that answer for it, converted off the supplied .fbx files through
+// scripts_fbx2glb.mjs like the rest. Untextured on purpose — see TOOLS.
+import hammerModelSrc from 'assets/models/props/hammer.glb';
+import axeModelSrc from 'assets/models/props/axe.glb';
 // The rock's material is Vegetation_B, so it reads its colour off the vegetation
 // atlas — one flat 0.02-wide patch of it, not a painted rock.
 import rubbleTextureSrc from 'assets/images/Vegetation.png';
@@ -52,6 +56,13 @@ import cowTextureSrc from 'assets/images/A_Cow_Shorthorn.webp';
 // (assets/models/PlotWheat (1).glb is a byte-identical duplicate of this and can
 // be deleted.)
 import plotSrc from 'assets/models/PlotWheat.glb';
+// The two crops the wheat shares its row with. Neither carries an animation —
+// both are grown by scale here, the same way the wheat is. See CROPS, which
+// holds everything that differs between them, flipY included: the apple tree is
+// one of the farm's own GLBs (flipY FALSE) and the carrot is an FBX conversion
+// (flipY TRUE), and they read off different atlases.
+import appleTreeSrc from 'assets/models/Apple_Tree_Stage.glb';
+import carrotModelSrc from 'assets/models/Carrot_Finished.glb';
 import cropTextureSrc from 'assets/images/Crops_Texture.png';
 import wheatSrc from 'assets/images/Wheat.webp';
 import appleSrc from 'assets/images/Apple.webp';
@@ -501,6 +512,133 @@ const RUBBLE_BREAK = {
   dust: { puffs: 5, size: 0.5, spread: 0.35, rise: 0.5 } // the crack of stone, at the break
 };
 
+/**
+ * The tools a tool choice hands over, and how each is built.
+ *
+ * Both .fbx files carry UVs into a tools atlas that is not in this build (they point at
+ * nothing in either character sheet), so each mesh is coloured off its own height instead:
+ * everything above `split` is the head, the rest is the grip, in the two colours the button
+ * icon shows.
+ *
+ * `length` is grip to head in world units. Not to scale and not meant to be — a hammer in
+ * proportion to a 0.9u character is under 0.2u, which is a smudge at this framing. These read
+ * as TOOLS against the things they hit without standing taller than the pair swinging them.
+ *
+ * `hit` is what a landed blow the target SURVIVES sounds like. The blow that finishes it makes
+ * its own noise — see swingTool.
+ */
+const TOOLS = {
+  hammer: {
+    model: hammerModelSrc,
+    length: 0.85, // against the 1u rock it comes down on
+    head: 0xc9d2d8,
+    grip: 0x5b8fd6,
+    split: 0.72,
+    hit: 'stones' as const
+  },
+  axe: {
+    model: axeModelSrc,
+    length: 1.05, // longer in the hand than the hammer, as the model is
+    head: 0xc9d2d8,
+    grip: 0xe0783a,
+    split: 0.71,
+    hit: 'chop' as const
+  }
+};
+
+/**
+ * How a tool is swung — shared by every beat that swings one, and laid out on the CAMERA's own
+ * plane rather than the world's: the pivot takes the camera's orientation, so a rotation about
+ * its local Z sweeps the head across the frame and the beat reads the same whatever the shot
+ * is doing. Angles are degrees about that axis, 0 being the handle out flat from the hand.
+ *
+ * A STATION is one place the tool works: it lands `taps` hits there, then the hand carries it
+ * to the next. Per station, `handleDeg` is what the handle makes with the horizontal at the
+ * moment it lands and `side` is which side of the target the tool itself stands on — 1 for
+ * over from the screen-left, -1 for over from the right, which turns it over in the hand.
+ *
+ * handleDeg is NEGATIVE — head tipped DOWN off the horizontal — because that is the only pose
+ * that reads as a strike. A hammer's face is square to its handle, so a handle hanging
+ * straight down points the face sideways and lands the head's CROWN. Laid flat the face does
+ * lead, but only just: at +18 the butt of the handle hangs 0.09 of a unit above the stone, the
+ * tool lies level across the rock and it reads as being dropped on its end rather than swung.
+ * By -30 the butt is clear by 0.53 and the head is unmistakably what goes in. (Past about +22
+ * the butt genuinely IS the lowest point, and swingTool, which puts whatever leads onto the
+ * target, will dutifully stand the tool on its handle.)
+ */
+const TOOL_SWING = {
+  raiseDeg: 75, // how far back off its own landing angle each blow is cocked
+  taps: 2, // hits at each station before the tool moves to the next
+  // The second hit of each pair. It does not go back up to the full cock or take the full
+  // swing to come down — a short snap off the target and straight back into it, which is what
+  // makes the two land as a one-two instead of as two separate blows.
+  quick: { raise: 0.55, lift: 0.12, swing: 0.13 },
+  // How high the hand lifts the tool as it carries it to the next station. Without it the tool
+  // travels flat between the two poses and drags its head through whatever is between them.
+  carry: 0.35,
+  pop: 0.16, // seconds to scale in, at the top of the first swing
+  lift: 0.3, // ...and to carry it up, over and down onto the next station. Longer than a swing
+  // on purpose: that travel is most of a full turn, and it is the beat that shows the player
+  // the tool MOVING to a fresh spot rather than rocking on one.
+  swing: 0.18, // each blow, cocked to landed
+  hold: 0.1, // a beat resting on the finished target
+  vanish: 0.16, // before it shrinks away again
+  // Grit, thrown off every blow at the spot it lands on. The stone's break throws its own on
+  // top of the last one (RUBBLE_BREAK.dust), which is several times this.
+  chip: { puffs: 3, size: 0.22, spread: 0.18, rise: 0.25 },
+  chipFor: 0.35, // seconds it hangs
+  /**
+   * The two blows the hammer puts into the stone, either side of its top. Mirrored because
+   * they have to look like the hammer MOVED: same-side blows can only differ by pitch, and
+   * pitch inside the usable band moves the hand about 0.15 of a unit, which is a hammer
+   * rocking on one spot. Turned over it stands the other side of the stone, a length of its
+   * own clear of the last blow. What rules out swinging BOTH in from the right is the frame —
+   * the stone sits 1.82 right of the opening shot's centre against a 2.45 portrait half-width,
+   * and a blow reaches about 0.6 across, which fits with 0.3 to spare where a hand a whole
+   * hammer-length out to the right would not.
+   */
+  stone: [
+    { handleDeg: -35, across: 0.26, side: 1 as const }, // steep, over from the left
+    { handleDeg: -5, across: -0.26, side: -1 as const } // flatter, turned over and back across
+  ],
+  drop: 0.06, // each station lands this much lower than the one before, working the target down
+  /**
+   * ...and the chop: one station per tree, from alternating sides so a stand is not three
+   * copies of one swing.
+   *
+   * Swung in the GROUND plane, not the screen's, which is what makes the axe square to the
+   * trunk. Its handle stays level all the way round — perpendicular to a standing tree by
+   * construction — and the edge, being square to the handle, comes in horizontally into the
+   * SIDE of the trunk. In the screen plane neither pose exists: a level handle points the edge
+   * straight down and chops the tree from the top, and turning the edge horizontal stands the
+   * handle up parallel to the trunk. `handleDeg` is therefore a heading here rather than a
+   * tilt — 0 lays the handle across the frame with the edge going in away from the camera.
+   *
+   * `bite` is how far ALONG the trunk from its base the blade goes in, as a fraction of the
+   * tree's own length, and it is a small number because the bare trunk is a small part of the
+   * model: measured on the round tree it runs from about 0.05 to 0.125 of the height and the
+   * canopy takes everything above that. 0.10 sits in the middle. Aiming a share of the tree's
+   * TAP point instead put the axe at 0.49, and aiming at the world box of a FELLED trunk aims
+   * at its canopy — both of them chopping foliage.
+   */
+  chop: {
+    handleDeg: 0,
+    bite: 0.1,
+    // ...and for a trunk that is already DOWN — the log across the mouth of the cow's pen,
+    // lying at 72 degrees. Level and square are the same thing only for a tree that is
+    // standing: swept at a log on the ground the axe comes in ALONG it, parallel to the very
+    // thing it is cutting. So that one is chopped the way the stone is, down the frame onto
+    // the middle of what is lying there, and this is its handle's tilt in that plane.
+    fallenDeg: -35,
+    fallen: Math.PI / 4 // over this much lean, a trunk counts as down
+  },
+  // How far towards the camera a swinging tool is held, in world units. The camera is
+  // ORTHOGRAPHIC, so this moves it not one pixel on screen — it only decides what it is drawn
+  // in front of. Without it the tool shares its target's depth and the tree it is felling is
+  // painted over the top of it.
+  front: 2
+};
+
 // The pointing hand that tells the player what to tap. It is a sprite parked in
 // the world above the breakable rock rather than a DOM or Phaser overlay, so it
 // tracks the rock through any resize without a line of layout code.
@@ -800,9 +938,7 @@ const CHOP = {
   linger: 0.25, // and how long the felled trunk lies there before it fades
   logFlight: 0.8, // seconds for its log to arc across to the bridge
   logSize: 0.55, // world units
-  arc: 1.6, // how high the log lifts on the way, world units
-  stagger: 0.35 // seconds between trees when the axe takes the whole stand —
-  // felling them on the same frame reads as one event, not three
+  arc: 1.6 // how high the log lifts on the way, world units
 };
 
 // The pull-back when they arrive. At the running zoom the bridge runs off the
@@ -988,23 +1124,37 @@ const COW_PEN = {
    */
   log: {
     // Its own length, not how tall it stands — it is never upright. A leaning trunk covers
-    // height * sin(lean) of GROUND, which is the number that has to match the gap: 2.6 at 72
-    // degrees is 2.47 across, against a 2.13 chord. Longer than anything else on the island
-    // (the wood grove is 1.8) because it is the one tree here whose job is its length.
-    height: 2.6,
+    // height * sin(lean) of GROUND, which is the number that has to match the gap.
+    //
+    // 2.6 covered 2.47 of a 2.13 chord, and those 0.34 of overhang did not read as a trunk
+    // resting ON the pen: they read as a trunk driven THROUGH the rocks at either end, which
+    // is what they were. 2.0 covers 1.90, so it sits inside the mouth with its ends short of
+    // the stone — still plainly blocking a 2.13 gap, since the rocks framing it are a metre
+    // wide themselves.
+    height: 2.0,
     // How far over it already lies. Not flat: at 90 there is nothing left for the axe to do
     // and the trunk just vanishes on the tap. At 72 it is plainly down, its raised end at 0.80
     // — resting on the rock at the far lip rather than hanging over it — and the chop still
     // has 18 degrees to drop it through, which is what sells the log being cleared rather than
     // deleted.
     leanDeg: 72,
-    // Where along the mouth of the gap its BASE sits, as a fraction from one lip to the other,
-    // and it is NEGATIVE: the trunk is longer than the gap is wide, so it starts a little
-    // BEHIND the first rock and finishes a little behind the far one. That overhang is the
-    // whole point — 0.17 tucked under a rock at each end, so the log reads as having come to
-    // rest ON the pen. At 0.03 its base sat inside the first rock and its far end stopped in
-    // mid-air short of the second, which is the arrangement that looked unfinished.
-    from: -0.08
+    // Where along the mouth of the gap its BASE sits, as a fraction from one lip to the other.
+    // It used to be negative — starting BEHIND the first rock, so both ends tucked under the
+    // stone — which is exactly the burying that had to go. Now the trunk is shorter than the
+    // chord, so it starts just inside the mouth and finishes just inside the far side.
+    from: 0.05, // centred: 1.90 of trunk across a 2.13 chord leaves 0.11 either side
+    /**
+     * ...and how far OUT of the pen it is nudged, in world units, along the bearing from the
+     * cow towards the pair. It lies ACROSS the mouth rather than in it. The lips do not move —
+     * only the trunk.
+     *
+     * Shortening alone cannot save it: a trunk that spans the gap has its ends AT the lips, and
+     * a lip rock reaches about 0.48 out from its own centre, so the only way out of the stone
+     * is sideways. 0.7 puts the ends past that with the trunk's own thickness to spare — a
+     * rock jittered to its full 22% oversize still only grazes, where 0.35 buried them by 0.39
+     * and the shipped 2.6-long trunk by 0.57.
+     */
+    out: 0.7
   }
 };
 
@@ -1069,12 +1219,19 @@ function cowPen(): {
   // rather than pointing along it. `towards` is what the planting turns it by — see addTrees,
   // where a tree is laid down along the bearing away from whatever it stands around.
   const lips = [toPair + gap / 2, toPair - gap / 2].map(at);
-  const from = COW_PEN.log.from;
+  const { from, out } = COW_PEN.log;
+  // Out of the mouth towards the pair, so the trunk lies ACROSS the gap rather than inside the
+  // rocks that frame it. Both ends move together — shifting only the base would swing the
+  // trunk round to point out of the opening instead of across it.
+  const forward = { x: Math.sin(toPair) * out, z: Math.cos(toPair) * out };
   const base = {
-    x: lips[0].x + (lips[1].x - lips[0].x) * from,
-    z: lips[0].z + (lips[1].z - lips[0].z) * from
+    x: lips[0].x + (lips[1].x - lips[0].x) * from + forward.x,
+    z: lips[0].z + (lips[1].z - lips[0].z) * from + forward.z
   };
-  return { rocks, log: { base, towards: lips[1] } };
+  return {
+    rocks,
+    log: { base, towards: { x: lips[1].x + forward.x, z: lips[1].z + forward.z } }
+  };
 }
 
 // The shot for that beat, solved from the screen bounds of the pair, the trees
@@ -1160,15 +1317,51 @@ const FARM = {
   // channel against the 0.28 it had. The walk from the cow grows 0.15 for it (2.84 against
   // 2.65) and the one to the barn falls to 0.73, so there is LESS walking after the bridge
   // than before, not more: 3.57 units against 3.97.
-  down: 5.25,
-  right: -1.0,
+  //
+  // 5.6 / -0.65 slides the field along the SCREEN to put it on the cow pit's own x. The apple
+  // trees are the reason: they stand 1.6 where the wheat stands 0.78, and a stand of them on
+  // the near beds was reaching up the screen over the two characters watching it grow. Only x
+  // moves — the field's z is what it was at 5.25 / -1.0, to the last decimal, which is why
+  // these two numbers had to change TOGETHER rather than either one alone:
+  //
+  //   x = (down + right) / sqrt2   and   z = (down - right) / sqrt2   (VIEW_YAW_DEG is 45)
+  //
+  // so z is held by keeping down - right at 6.25, and x is set by down + right. COW.offset.x
+  // is 3.5, hence 4.95: 4.95 / sqrt2 = 3.50. In screen terms the field steps 0.35 further
+  // down and 0.35 to the right, which is the trees moving off the pair both ways at once.
+  //
+  // The pen is 4.9 away up the field's own z from there, against a 1.75 radius and a ~1.3
+  // half-field, and the walk still passes 3.05 clear of it — see farmLeg, which is solved off
+  // these two numbers and needs nothing retuned. The barn hangs off the FIELD, so it comes
+  // along and keeps every clearance it was given, this time moving away from the channel.
+  down: 5.6,
+  right: -0.65,
   // How far short of the field's middle they pull up, so they stand at the edge
   // of the soil rather than in it. 2.5 rather than the ~1.7 the beds actually
   // measure: the walk now comes in DIAGONALLY across a field squared to the world
   // axes, so its near CORNER is what they meet, and the lane offset carries one of
   // them another swing sideways into it. At 1.9 that character finished the walk
   // standing in the wheat.
-  ahead: 2.5,
+  //
+  // It is also the only knob that keeps the APPLE TREES off the two characters
+  // watching them grow, which is worth spelling out because the obvious lever —
+  // moving the field — cannot do it: they stop `ahead` short of wherever the
+  // field is, so it takes them along with it and the gap is always this number.
+  //
+  // The camera is orthographic at VIEW_ELEV_DEG, so a thing of height h standing
+  // d down-screen of them reaches h·cos(el) − d·sin(el) above their feet, and a
+  // 1.6 tree is clear of them at d = 3.02. Off that: the nearest bed leads the
+  // field's middle by 0.93 up-screen (the beds are squared to the WORLD, so it is
+  // a corner that leads, not a side), and the walk covers 0.99 of down-screen per
+  // unit, which asks about 3.96 here. It moves with the bearing, so it is worked
+  // out rather than written down — scratch-farm-place.mjs reads these knobs out of
+  // this file and prints the number, along with what the walk and the pen are
+  // doing at it.
+  //
+  // Shrinking the tree is the other way out and it is the worse one: 1.6 is what
+  // a tree IS beside a 0.9 character, and the whole island is built to that scale.
+  // What this costs instead is walking — `ahead` comes straight off the walk.
+  ahead: 2.0,
   // One plot's width, in world units. The bed is authored 4.4 across with its
   // wheat 2.9 tall, so the crop always stands 0.65x this — at 1.2 that is 0.78,
   // about shoulder height on a 0.9 character, which is what real wheat does.
@@ -1196,6 +1389,52 @@ const FARM = {
   shot: 0.7,
   ease: 1
 };
+
+/**
+ * The crops the row offers that are NOT the wheat. Wheat lives inside the plot
+ * GLB and comes up with the bed; these two are their own models, stood on the
+ * same beds and hidden until they are picked — one entry each, because almost
+ * everything about them differs and none of it belongs inline in the loader.
+ *
+ * `height` is world units, corner to corner, and the model is measured and
+ * scaled to it, so a re-export at any authored size still comes up the same
+ * size on screen. Both are then stood on the soil rather than being placed by
+ * their own origin: NEITHER model has its origin where the ground is. The tree's
+ * sits under its roots, and the carrot patch's sits halfway up the carrots —
+ * placed by that, the orange body is 60% buried and the beds sprout tufts of
+ * green with nothing under them.
+ */
+const CROPS = {
+  apple: {
+    src: appleTreeSrc,
+    // Its material is Default_Material off the vegetation sheet, like the rock's.
+    atlas: rubbleTextureSrc,
+    flipY: false, // one of the farm's own GLBs — see the note at the imports
+    // 1.6 is a head and a half over a 0.9 character: a young tree, not a stand.
+    height: 1.6,
+    // A tree is a bigger thing to spring up than a sheaf, so it takes longer
+    // than FARM.grow does.
+    grow: 0.8
+  },
+  carrot: {
+    src: carrotModelSrc,
+    // Crops_B: the same sheet the wheat in the bed reads off, at the other
+    // convention — hence its own texture rather than a shared one.
+    atlas: cropTextureSrc,
+    // TRUE, out of scripts_fbx2glb.mjs, which leaves UVs alone. Checked against
+    // the sheet rather than assumed: these UVs land on the orange-and-green
+    // carrot patch this way up, and on wheat yellow and empty black the other.
+    flipY: true,
+    // The wheat's own height, because this stands in the bed beside it and the
+    // two crops should read as the same size of thing. What CAPS it is the
+    // PATCH: the model is a dozen carrots spread over a bed rather than one
+    // plant, so height carries its footprint with it — 0.78 puts that at
+    // 0.98 x 1.18 against the 1.32 the beds stand apart, and much taller has
+    // neighbouring patches growing through each other.
+    height: 0.6,
+    grow: 0.5
+  }
+} as const;
 
 // The last beat: a barn standing broken past the farmland, which the same axe and
 // the same timber put right.
@@ -1226,22 +1465,23 @@ const BARN = {
   down: -2.7,
   right: -3.05,
   /**
-   * How far short of the barn they pull up — and, since the walk to it is whatever is LEFT
-   * after this is taken off, the thing that decides both where they end up standing and how
-   * far they travel to get there. It is the only knob for either: the barn's own position is
-   * pinned by the stream (see `down`/`right`).
+   * Where they pull up for the last beat, as a screen offset from the barn — the same r/d
+   * frame its trees are placed in, and read through the same barnSpots.
    *
-   * 2.0 rather than 2.8. At 2.8 they stopped 1.19 clear of the barn's footprint, which put
-   * the last beat's characters a barn's width away from the barn, and left only 0.73 units of
-   * walk to get there — half a second, barely a move. 2.0 stands them 0.39 off it, a fifth of
-   * a unit once their own width is taken off, and doubles the walk to 1.53.
+   * A SPOT rather than the distance-short-of-the-barn this used to be. That version had one
+   * number and no say in the direction: they arrive from the field, which lies down-screen and
+   * to the barn's right, so stopping short along that line stood them level with its
+   * right-hand wall (r 1.95, d 0.42) — beside the building, not in front of it — and no value
+   * of it moved them round. r 0 / d 2.0 puts them squarely down-screen of the barn with the
+   * whole of it behind them, which is what the beat is for: the repair happens over their
+   * shoulders.
    *
-   * The floor is 1.6, where the nearer character's centre crosses INTO the footprint. Below
-   * about 1.8 they are touching the wall, so 2.0 is one notch off the wall rather than the
-   * last value that technically fits. Both of them stay down-screen of the barn at this
-   * distance, which is what keeps them in front of it rather than hidden behind it.
+   * Its LENGTH is the standoff, and 2.0 of it is deliberate. The floor is about 1.6, where the
+   * nearer character's centre crosses into the barn's footprint; below 1.8 they are touching
+   * the wall. Bear in mind the walk is whatever is left over — moving this spot towards the
+   * barn lengthens the walk to it and away shortens it, the opposite of the old knob.
    */
-  ahead: 2.0,
+  stop: { r: 0, d: 2.0 },
   // Height in world units — but it is the BOUNDING BOX that gets scaled to it, not the
   // building, and for this model those are very different things. Barn.glb carries a
   // weathervane needle 0.007 across that runs from 80.5% of its box to the very top, and
@@ -1301,7 +1541,7 @@ const BARN = {
   // These three stay put — they are the barn's setting, not its repair. All on the barn's
   // own bank: screen-left of it is straight at the stream from here, which is what once put
   // a tree in the water.
-  keepTrees: [{ r: 1.6, d: -0.8 }],
+  keepTrees: [{ r: 0.5, d: -1.8 }],
   // ...and these two, to the barn's LEFT, are the ones the axe takes for the repair. They
   // sit down-screen of it because that is the only left-hand ground there is: the channel
   // runs immediately up-screen on that side, so every clear spot to the left is at least
@@ -1321,6 +1561,10 @@ const BARN = {
   margin: 0.5,
   shot: 0.4,
   ease: 1,
+  // Seconds for the pair to turn round and face the barn when the last log lands — see
+  // repairBarn. 0.5 against the repair's own 0.7: they are round before the smoke thins,
+  // which is the only thing the timing has to beat.
+  turn: 0.5,
   // The repair. It IS the bridge's, and runs through the same code: smoke out, the
   // two models change hands under full cover, the new one springs to size as the
   // smoke thins. swap is when the change happens, pop how long the spring takes.
@@ -1942,23 +2186,30 @@ function barnAt(): { x: number; z: number } {
   };
 }
 
-/** The walk from the farmland to it, pulled up BARN.ahead short. */
+/**
+ * The walk from the farmland to it, ending at BARN.stop — a named SPOT beside the
+ * barn rather than a distance short of its middle.
+ *
+ * It used to be the latter, and that is what put them off to one side: they came
+ * at the barn from the field, which is down-screen and to its right, so stopping
+ * short along that line left them level with its right-hand wall however the
+ * number was tuned. Where they end up standing is a placement, so it is written
+ * as one, in the barn's own screen frame like its trees are.
+ */
 function barnLeg(): {
   heading: number;
   distance: number;
   stop: { x: number; z: number };
 } {
   const from = farmLeg().stop;
-  const barn = barnAt();
-  const dx = barn.x - from.x;
-  const dz = barn.z - from.z;
-  const length = Math.hypot(dx, dz);
-  const distance = length - BARN.ahead;
+  const [stop] = barnSpots([BARN.stop]);
+  const dx = stop.x - from.x;
+  const dz = stop.z - from.z;
 
   return {
     heading: Math.atan2(dx, dz),
-    distance,
-    stop: { x: from.x + (dx / length) * distance, z: from.z + (dz / length) * distance }
+    distance: Math.hypot(dx, dz),
+    stop
   };
 }
 
@@ -2129,7 +2380,9 @@ const SPEECH_LINES = {
   cowJoined: 'She\u2019s free!\nLet\u2019s go!',
   cross: "Bridge fixed!\nLet's go!",
   crop: 'Pick a crop!',
-  planted: 'Wheat it is!',
+  // One per crop the row offers: the beat is the player's choice being taken up,
+  // so it has to name what they actually picked.
+  planted: { wheat: 'Wheat it is!', apple: 'Apples it is!', carrot: 'Carrots it is!' },
   expand: 'So much more\nto build!',
   barnFixed: 'Barn\u2019s good\nas new!'
 };
@@ -2523,6 +2776,12 @@ export class IslandScene {
   private effects: Array<(delta: number) => boolean> = [];
   private raycaster = new THREE.Raycaster();
   private rubbleMaterial?: THREE.MeshStandardMaterial;
+  // The tools, rigged and parked out of sight until a tool choice is answered. `points` is the
+  // silhouette as x/y pairs in the pivot's frame — see addTool and swingTool.
+  private tools: {
+    [name in keyof typeof TOOLS]?: { pivot: THREE.Group; points: Float32Array };
+  } = {};
+  private swinging = false; // is a tool mid-beat? nothing should ask the player to tap while it is
   // The one rock that answers to a tap, with the tap target worked out from its
   // own size. angle is where it sits on the arc, which the path lines up with.
   private rocks: Array<{ pivot: THREE.Group; rock: THREE.Object3D }> = [];
@@ -2599,6 +2858,7 @@ export class IslandScene {
     centre: THREE.Vector3;
     radius: number;
     top: number;
+    length: number; // trunk base to canopy tip, whichever way it is lying
     chopped: boolean;
     grove: 'wood' | 'cow' | 'barn' | 'barnKeep'; // what felling it is for, or barnKeep for never
     axis: THREE.Vector3; // the horizontal it topples about
@@ -2619,6 +2879,13 @@ export class IslandScene {
   // scale it has to arrive at, kept because the node comes in at 0.01 of the bed
   // and springing it up has to end there rather than at 1.
   private plots: Array<{ crop: THREE.Object3D; grown: THREE.Vector3 }> = [];
+  // The other two crops on offer, stood on those same beds and hidden, one set
+  // each, in case the player picks either over the wheat. Same shape as plots,
+  // so one grow routine springs up any of the three — see growCrop.
+  private planted: Record<keyof typeof CROPS, Array<{ crop: THREE.Object3D; grown: THREE.Vector3 }>> = {
+    apple: [],
+    carrot: []
+  };
   private wood = 0;
   // What the shot has to SHOW, as half-extents on screen: w across, h up and down, in
   // world units. The zoom is solved from this and the device's aspect rather than being a
@@ -2701,6 +2968,8 @@ export class IslandScene {
     this.addBoat();
     this.addCharacters();
     this.addRubble();
+    this.addTool('hammer');
+    this.addTool('axe');
     this.addBridge();
     this.addTrees();
     this.addCow();
@@ -3149,7 +3418,7 @@ export class IslandScene {
         if (this.breakable) {
           // Stone: the hammer breaks it, the broom is no use against rock.
           this.whenVisible(() => {
-            this.showToolChoice([hammerSrc, broomSrc], () => this.breakRubble());
+            this.showToolChoice([hammerSrc, broomSrc], () => this.hammerRubble());
             this.say(SPEECH_LINES.tool);
           });
         }
@@ -3163,19 +3432,28 @@ export class IslandScene {
    * A choice of icons: white buttons along the bottom of the screen, with the
    * hand pointing up at the FIRST one — which is always the one that works. Both
    * obstacles ask it of a TOOL and the farmland asks it of a CROP; it is the
-   * same row either way, which is why it is not named for either. Tapping
-   * any other only wobbles it; the obstacle gives way to the right tool and
-   * nothing else. Each button handles its own tap, so the scene's raycast never
+   * same row either way, which is why it is not named for either. Tapping one
+   * with nothing behind it only wobbles it; the obstacle gives way to the right
+   * tool and nothing else, while the crop row takes wheat OR apples and plants
+   * what was picked. Each button handles its own tap, so the scene's raycast never
    * sees these; onPointerDown stands the world down while the row is up.
    */
-  private showToolChoice(icons: string[], onPick: () => void): void {
+  private showToolChoice(icons: string[], onPick: (() => void) | Array<(() => void) | undefined>): void {
     const { row, button } = this.choiceRow();
+    // A handler per icon, in the icons' own order; anything without one wobbles.
+    // The common case — first icon works, the rest are wrong answers — is still
+    // written as a bare function, and the obstacles all pass it that way. The
+    // crop row is the only one where every icon is a right answer.
+    const picks = Array.isArray(onPick) ? onPick : [onPick];
 
-    const right = button(icons[0], () => {
-      this.clearToolChoice();
-      onPick();
-    });
-    icons.slice(1).forEach((src) => button(src, (el) => this.wobbleTool(el)));
+    const [right] = icons.map((src, i) =>
+      button(src, (el) => {
+        const pick = picks[i];
+        if (!pick) return this.wobbleTool(el);
+        this.clearToolChoice();
+        pick();
+      })
+    );
 
     document.body.appendChild(row);
     this.toolChoice = row;
@@ -3878,23 +4156,42 @@ export class IslandScene {
   }
 
   /**
-   * The axe going through a whole stand, one tree every CHOP.stagger. Each one
-   * still goes through chopTree, so the wood grove's logs still fly and still
-   * count towards the bridge, and the last cow tree still frees the cow —
-   * exactly as when the player felled them by hand.
+   * The axe going through a whole stand: two quick chops into a trunk, that tree goes over,
+   * and the hand carries the axe on to the next while it falls. Each one still goes through
+   * chopTree, so the wood grove's logs still fly and still count towards the bridge, and the
+   * last cow tree still frees the cow — exactly as when the player felled them by hand.
+   *
+   * What spaces the falls out is the swing itself now. It used to be a timer (CHOP.stagger),
+   * which is gone: two things pacing the same beat is one too many.
    */
   private fellGrove(grove: 'wood' | 'cow' | 'barn'): void {
     const standing = this.trees.filter((tree) => tree.grove === grove && !tree.chopped);
 
-    let elapsed = 0;
-    let next = 0;
-    this.effects.push((delta: number) => {
-      elapsed += delta;
-      while (next < standing.length && elapsed >= next * CHOP.stagger) {
-        this.chopTree(standing[next++]);
-      }
-      return next < standing.length;
-    });
+    // A stand of standing trees is swept at level, square to their trunks. A trunk already
+    // DOWN is square to that same swing — the axe would come in along its length — so it gets
+    // the stone's treatment instead: a blow down the frame. See TOOL_SWING.chop.fallen.
+    const down = standing.some((tree) => tree.tilt > TOOL_SWING.chop.fallen);
+
+    this.swingTool(
+      'axe',
+      standing.map((tree, i) => ({
+        // Into the TRUNK, TOOL_SWING.chop.bite of the way ALONG it from its base — which is
+        // where its pivot is — following the tree's own up axis turned by however the pivot is
+        // turned. Upright that walks straight up the trunk; lying at 72 degrees it walks out
+        // along the ground with it. Anything measured off the tree's world BOX instead lands
+        // the axe in the canopy, which is most of what a felled tree's box contains.
+        at: tree.pivot.position
+          .clone()
+          .addScaledVector(
+            new THREE.Vector3(0, 1, 0).applyQuaternion(tree.pivot.quaternion),
+            tree.length * TOOL_SWING.chop.bite
+          ),
+        handleDeg: down ? TOOL_SWING.chop.fallenDeg : TOOL_SWING.chop.handleDeg,
+        side: (i % 2 ? -1 : 1) as 1 | -1, // alternating, so a stand is not one swing three times
+        land: () => this.chopTree(tree)
+      })),
+      down ? 'screen' : 'ground'
+    );
   }
 
   /** Fade the row out and drop it, once the choice has been made. */
@@ -4076,6 +4373,32 @@ export class IslandScene {
       distance,
       deck,
       next
+    });
+  }
+
+  /**
+   * Turn the pair on the spot to look at something. No walk and no gait change —
+   * the run's own turn (see sendRunner) only exists as part of a walk, and this
+   * beat has them standing still with something happening in front of them.
+   *
+   * Each one turns from wherever they are facing by the SHORT way round, so two
+   * characters standing a stride apart do not swing opposite ways to look at the
+   * same thing. They finish on slightly different headings for the same reason:
+   * each is aimed from its own feet, not handed one shared yaw.
+   */
+  private facePair(at: { x: number; z: number }, ease: number): void {
+    this.actions.forEach(({ pivot }) => {
+      const from = pivot.rotation.y;
+      // Models face +Z, so a compass bearing IS the yaw — the same identity
+      // farmLeg and barnLeg hand to sendRunner.
+      const turn = shortestTurn(Math.atan2(at.x - pivot.position.x, at.z - pivot.position.z) - from);
+      let elapsed = 0;
+      this.effects.push((delta: number) => {
+        elapsed += delta;
+        const k = THREE.MathUtils.smoothstep(elapsed, 0, ease);
+        pivot.rotation.y = from + turn * k;
+        return k < 1;
+      });
     });
   }
 
@@ -4587,7 +4910,8 @@ export class IslandScene {
           offsets.forEach((offset, n) => {
             const i = n + seed;
             const tree = source.clone(true);
-            tree.scale.setScalar(baseScale * (0.85 + jitter(i, 21) * 0.3));
+            const grown = 0.85 + jitter(i, 21) * 0.3; // no two the same size
+            tree.scale.setScalar(baseScale * grown);
 
             // Centred on its trunk and stood on the grass, so the pivot it
             // hangs from is the point it will topple about.
@@ -4635,6 +4959,10 @@ export class IslandScene {
                 : new THREE.Vector3(pivot.position.x, height * 0.45, pivot.position.z),
               radius: (Math.max(spread.x, spread.z) / 2) * CHOP.hitPadding,
               top: stood.max.y,
+              // What it measures along its OWN trunk. For anything upright that is its height,
+              // but a trunk lying at 72 degrees is barely taller than it is thick, and this is
+              // what the axe walks up to find the bare part of it.
+              length: height * grown,
               chopped: false,
               grove,
               axis,
@@ -5085,6 +5413,93 @@ export class IslandScene {
    */
   private addFarm(): void {
     this.addPlots(farmField(), FARM.cols, FARM.rows, true);
+    (Object.keys(CROPS) as Array<keyof typeof CROPS>).forEach((crop) =>
+      this.addBedCrop(crop, farmField(), FARM.cols, FARM.rows)
+    );
+  }
+
+  /**
+   * One crop's models waiting on each of the farm's beds, invisible until the
+   * player picks that crop. Loaded HERE rather than on the tap: the row goes up
+   * the moment the camera settles, and a fetch started at that point would leave
+   * the field empty for as long as it took. Between them they are 25KB standing
+   * four times over, so having both in hand costs nothing to speak of.
+   *
+   * The grid is laid out to the same arithmetic addPlots uses — same field, same
+   * spacing — rather than being read off the beds, because the beds are loaded
+   * separately and neither load can wait on the other.
+   */
+  private addBedCrop(name: keyof typeof CROPS, at: { x: number; z: number }, cols: number, rows: number): void {
+    const crop = CROPS[name];
+
+    // Alpha-cutout, like the scenery and the wheat: leaves and greens are cards.
+    // See addScenery, which does this for a dozen props.
+    const texture = new THREE.TextureLoader().load(crop.atlas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = crop.flipY;
+    texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    const material = new THREE.MeshStandardMaterial({
+      map: texture,
+      roughness: 1,
+      alphaTest: 0.5,
+      side: THREE.DoubleSide
+    });
+
+    new GLTFLoader().load(
+      crop.src,
+      (gltf: { scene: THREE.Group }) => {
+        const source = gltf.scene;
+        source.traverse((child: THREE.Object3D) => {
+          if ((child as THREE.Mesh).isMesh) (child as THREE.Mesh).material = material;
+        });
+        this.shade(source);
+
+        // Measured and scaled on HEIGHT, then centred on the bed and stood on
+        // it. Solved AFTER a first measure, because these models arrive with
+        // their own offsets and scales baked into the node and the authored
+        // numbers say nothing about where they land — see CROPS, where neither
+        // origin is the ground.
+        const size = new THREE.Box3().setFromObject(source).getSize(new THREE.Vector3());
+        source.scale.setScalar(crop.height / size.y);
+        const box = new THREE.Box3().setFromObject(source);
+        const centre = box.getCenter(new THREE.Vector3());
+        // Once, not once per bed: every clone is the same model at the same scale.
+        const offset = new THREE.Vector3(-centre.x, -box.min.y, -centre.z);
+
+        const spacing = FARM.plot + FARM.gap;
+        const group = new THREE.Group();
+        group.name = `${name} crop`;
+
+        for (let row = 0; row < rows; row++) {
+          for (let col = 0; col < cols; col++) {
+            const model = source.clone(true);
+            model.position.copy(offset);
+
+            // The pivot's origin is on the soil, which is what makes the grow
+            // read as the crop coming UP out of the bed: scaling it from nothing
+            // keeps the foot of the thing planted instead of shrinking it
+            // towards its own middle.
+            const pivot = new THREE.Group();
+            pivot.add(model);
+            pivot.position.set(
+              at.x + (col - (cols - 1) / 2) * spacing,
+              FARM.lift,
+              at.z + (row - (rows - 1) / 2) * spacing
+            );
+            // A quarter turn apiece, so four copies of one silhouette do not line
+            // up as four copies of one silhouette.
+            pivot.rotation.y = (row * cols + col) * Math.PI * 0.5;
+            pivot.visible = false;
+            group.add(pivot);
+            this.planted[name].push({ crop: pivot, grown: pivot.scale.clone() });
+          }
+        }
+
+        this.scene.add(group);
+      },
+      undefined,
+      (err: unknown) => console.error(`${name} crop model failed to load:`, err)
+    );
   }
 
   /**
@@ -5685,40 +6100,86 @@ export class IslandScene {
 
   /**
    * They have reached the farmland. The shot settles on the field and the three
-   * crops come up — same rule as the tools, so the FIRST icon is the one that
-   * works and the hand is already on it. Apple and carrot only wobble: there is
-   * one crop modelled and the beat is "plant the wheat", not a menu.
+   * crops come up — the hand is on the FIRST icon, as it is for the tools, and
+   * wheat is what it points at. All three are modelled and all three plant: the
+   * wheat that is already in the beds, an orchard, or a carrot patch.
    */
   private chooseCrop(): void {
-    const field = farmField();
-    const half = ((Math.max(FARM.cols, FARM.rows) - 1) / 2) * (FARM.plot + FARM.gap) + FARM.plot / 2;
-    // The pair and all four corners of the ground they are about to plant.
-    const { target, need } = this.frameOn(
-      [
-        ...this.pairSubjects(),
-        ...[-1, 1].flatMap((sx) => [-1, 1].map((sz) => ({ x: field.x + sx * half, z: field.z + sz * half, height: 0.8 })))
-      ],
-      FARM.margin
-    );
+    const { target, need } = this.cropFrame(0.8);
     this.moveCamera(
       target,
       need,
       FARM.ease,
       () => {
-        this.showToolChoice([wheatSrc, appleSrc, carrotSrc], () => this.plantWheat());
+        this.showToolChoice(
+          [wheatSrc, appleSrc, carrotSrc],
+          [() => this.plantWheat(), () => this.plantApples(), () => this.plantCarrots()]
+        );
         this.say(SPEECH_LINES.crop);
       }
     );
   }
 
   /**
-   * Wheat it is: the crop springs up one plot at a time, so the field FILLS
-   * across rather than blinking on in one frame.
+   * The pair and all four corners of the ground they are about to plant, framed
+   * to whatever is STANDING in it: 0.8 while it is bare soil and shoulder-high
+   * wheat, the tree's own height once an orchard is coming up out of it. The
+   * apple beat is the only reason this is a function — the wheat never grows
+   * taller than the shot it was chosen in.
    */
+  private cropFrame(height: number): { target: THREE.Vector3; need: { w: number; h: number } } {
+    const field = farmField();
+    const half = ((Math.max(FARM.cols, FARM.rows) - 1) / 2) * (FARM.plot + FARM.gap) + FARM.plot / 2;
+    return this.frameOn(
+      [
+        ...this.pairSubjects(),
+        ...[-1, 1].flatMap((sx) => [-1, 1].map((sz) => ({ x: field.x + sx * half, z: field.z + sz * half, height })))
+      ],
+      FARM.margin
+    );
+  }
+
+  /** Wheat it is. */
   private plantWheat(): void {
-    this.say(SPEECH_LINES.planted, 4);
-    // Once for the field, not once per plot: the sixteen beds come up FARM.stagger apart, and
-    // sixteen copies of the same rustle would be a burst of noise rather than a crop growing.
+    this.growCrop('wheat', this.plots);
+  }
+
+  /**
+   * Apples it is: a tree comes up out of each bed instead of the wheat. Same
+   * beat and the same cue to the barn — only slower, because a tree is a bigger
+   * thing to spring up than a sheaf.
+   */
+  private plantApples(): void {
+    // The shot was framed on bare soil, and the trees stand twice a character's
+    // height — left alone it would crop their tops off as they came up. Pulling
+    // back over the same seconds they grow in is what keeps the whole orchard in
+    // frame, and it reads as the camera making room for them. The carrots are
+    // shorter than the 0.8 the frame already allows for, so they ask for nothing.
+    const { target, need } = this.cropFrame(CROPS.apple.height);
+    this.moveCamera(target, need, CROPS.apple.grow);
+    this.growCrop('apple', this.planted.apple, CROPS.apple.grow);
+  }
+
+  /** Carrots: a patch comes up out of each bed. */
+  private plantCarrots(): void {
+    this.growCrop('carrot', this.planted.carrot, CROPS.carrot.grow);
+  }
+
+  /**
+   * The crop springs up one plot at a time, so the field FILLS across rather
+   * than blinking on in one frame. Whatever was picked is passed in — the wheat
+   * hidden inside the beds, or the trees and patches standing on them — and
+   * NAMED, because the line said over it is the player being told their own
+   * choice was taken up.
+   */
+  private growCrop(
+    name: keyof typeof SPEECH_LINES.planted,
+    planted: Array<{ crop: THREE.Object3D; grown: THREE.Vector3 }>,
+    grow = FARM.grow
+  ): void {
+    this.say(SPEECH_LINES.planted[name], 4);
+    // Once for the field, not once per plot: the beds come up FARM.stagger apart, and
+    // four copies of the same rustle would be a burst of noise rather than a crop growing.
     sfx.play('crop');
     // A beat to look at the crop, then they spot the barn.
     this.wait(BARN.delay, () => this.walkToBarn());
@@ -5728,8 +6189,8 @@ export class IslandScene {
       elapsed += delta;
 
       let growing = false;
-      this.plots.forEach(({ crop, grown }, i) => {
-        const k = THREE.MathUtils.clamp((elapsed - i * FARM.stagger) / FARM.grow, 0, 1);
+      planted.forEach(({ crop, grown }, i) => {
+        const k = THREE.MathUtils.clamp((elapsed - i * FARM.stagger) / grow, 0, 1);
         if (k <= 0) {
           growing = true; // still waiting its turn
           return;
@@ -5904,7 +6365,10 @@ export class IslandScene {
     }
 
     if (this.trees.some((entry) => entry.grove === 'cow' && !entry.chopped)) {
-      this.pointAtNextTree();
+      // ...unless the axe is already on its way to that tree. The hand is there to tell the
+      // player what to tap, and a hand pointing at a trunk an axe is mid-swing at reads as the
+      // ad asking for something it is already doing.
+      if (!this.swinging) this.pointAtNextTree();
       return;
     }
     this.rescueCow();
@@ -6280,6 +6744,13 @@ export class IslandScene {
     const barn = this.barn;
     if (!barn) return;
 
+    // Round to watch it. They walked PAST the barn to reach BARN.stop, so the last thing the
+    // walk left them doing is facing away from the building about to be rebuilt over their
+    // shoulders — and they stand there for the whole repair and the line after it. The turn
+    // runs under the smoke going up, which is what hides the pivot: by the time the barn is
+    // back they have been looking at it for a second.
+    this.facePair(barnAt(), BARN.turn);
+
     // With the smoke, for the same reason the bridge's is: the callback below fires once it has
     // cleared, which is after the barn is already standing.
     sfx.play('barn');
@@ -6458,6 +6929,351 @@ export class IslandScene {
   private pointAtNextTree(): void {
     const next = this.trees.find((tree) => !tree.chopped && tree.grove === this.grove);
     if (next) this.showTapHint(next.centre, next.top);
+  }
+
+  /**
+   * One tool, loaded with everything else and parked invisible: a swing has to answer the tap
+   * on the frame it happens, so nothing is fetched at the moment it is needed — the same rule
+   * the bridge and the barn hold their pairs under.
+   *
+   * It is hung off its GRIP, so the pivot is the hand: rotating it is a swing.
+   */
+  private addTool(name: keyof typeof TOOLS): void {
+    const spec = TOOLS[name];
+    new GLTFLoader().load(
+      spec.model,
+      (gltf: { scene: THREE.Group }) => {
+        const model = gltf.scene;
+        const box = new THREE.Box3().setFromObject(model);
+        const scale = spec.length / (box.max.y - box.min.y);
+
+        // No atlas to bind (see TOOLS), so the two halves are painted onto the mesh:
+        // everything above the split is head, the rest is grip. Read off the geometry's OWN
+        // bounds rather than the FBX's units — the GLB is quantized, so its positions are
+        // normalised and the node carries the scale.
+        const head = new THREE.Color(spec.head);
+        const grip = new THREE.Color(spec.grip);
+        const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55 });
+        model.traverse((child: THREE.Object3D) => {
+          const mesh = child as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const position = mesh.geometry.attributes.position;
+          mesh.geometry.computeBoundingBox();
+          const bounds = mesh.geometry.boundingBox as THREE.Box3;
+          const split = bounds.min.y + (bounds.max.y - bounds.min.y) * spec.split;
+          const colors = new Float32Array(position.count * 3);
+          for (let i = 0; i < position.count; i++) {
+            (position.getY(i) > split ? head : grip).toArray(colors, i * 3);
+          }
+          mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+          mesh.material = material;
+          // Lit and shadowed like everything else, but it does NOT cast: a swinging tool is
+          // held a couple of units towards the camera so it draws over its target (see
+          // TOOL_SWING.front), and a shadow thrown from there falls well off where the tool
+          // appears to be.
+          mesh.receiveShadow = true;
+          mesh.castShadow = false;
+        });
+
+        // Laid on its side and slid along so the grip end sits ON the pivot: the handle then
+        // runs out flat from the hand with the head at the far end and its business end
+        // pointing down — a tool at the moment it lands. (Both models stand upright with the
+        // head at the top, so a quarter turn is what puts the handle on the horizontal;
+        // turning it head-DOWN instead points the face sideways and lands the crown.)
+        //
+        // ...and then turned over about that handle, because the quarter turn alone lands the
+        // model's +x end downward and on BOTH of these that is the wrong end — the hammer's
+        // claw (a blade 1.4 units thick, against the 22.6 of the face opposite) and the axe's
+        // poll. Rolling it puts the face and the bit underneath, where they belong.
+        model.scale.setScalar(scale);
+        model.rotation.z = -Math.PI / 2;
+        model.rotation.x = Math.PI;
+        model.position.x = -box.min.y * scale;
+
+        const pivot = new THREE.Group();
+        pivot.add(model);
+        pivot.visible = false;
+        this.scene.add(pivot);
+        pivot.updateMatrixWorld(true);
+
+        // ...and every vertex of it in the pivot's own frame, flattened onto the swing plane.
+        // WHICH part of a tool leads at a given angle is not something to write down — a
+        // hammer's head is a claw one side and a face the other, an axe's is a bit and a poll,
+        // and the answer changes with the angle — so swingTool reads it off the mesh. A few
+        // hundred vertices: measured once here, walked once per blow.
+        const points: number[] = [];
+        const vertex = new THREE.Vector3();
+        model.traverse((child: THREE.Object3D) => {
+          const mesh = child as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const position = mesh.geometry.attributes.position;
+          for (let i = 0; i < position.count; i++) {
+            vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+            points.push(vertex.x, vertex.y);
+          }
+        });
+        this.tools[name] = { pivot, points: new Float32Array(points) };
+      },
+      undefined,
+      (err: unknown) => console.error(`${name} model failed to load:`, err)
+    );
+  }
+
+  /**
+   * Swing a tool through a run of STATIONS: at each one it lands TOOL_SWING.taps quick hits,
+   * then the hand carries it on to the next, and after the last it shrinks away. A station's
+   * `land` fires on the frame its final hit touches down — that is what breaks the stone or
+   * fells the tree — and every hit before it only cracks and throws grit.
+   *
+   * Nothing here is a position written down. Each station's grip is placed by working BACK
+   * from where the head has to end up: whichever part of the tool LEADS at that station's
+   * angle is read off the mesh, and the grip goes wherever puts that part on the target.
+   * Retune the angles, the tool's length or the target and the blows still land face-first.
+   */
+  private swingTool(
+    name: keyof typeof TOOLS,
+    stations: Array<{
+      at: THREE.Vector3; // what it hits, in the world
+      across?: number; // ...offset this far across the frame, and
+      drop?: number; // ...this far down it
+      handleDeg: number;
+      side: 1 | -1;
+      land?: () => void;
+    }>,
+    plane: 'screen' | 'ground' = 'screen'
+  ): void {
+    const tool = this.tools[name];
+    // The models load with the scene, so this only ever misses if one failed outright — in
+    // which case the obstacles still have to give way. A silent break beats a dead ad.
+    if (!tool || !stations.length) {
+      stations.forEach((station) => station.land?.());
+      return;
+    }
+    const { pivot: swung, points } = tool;
+
+    this.hideTapHint();
+
+    /**
+     * The plane the swing happens in, as the two axes the tool is laid out on: `right` is
+     * where its handle points at angle 0 and `up` is the way its head is raised. A rotation
+     * about their normal is the swing.
+     *
+     * SCREEN is the camera's own plane — a blow that comes down the frame, which is what
+     * breaking a rock on the ground looks like. GROUND is the horizontal one: the tool sweeps
+     * round at a fixed height with its handle level, which is the ONLY way to put a blade into
+     * the SIDE of a standing trunk. A blade is square to its handle and the head is a flat
+     * plate holding both, so in the screen plane a level handle can only ever chop downward
+     * and a horizontal edge needs the handle stood up parallel to the trunk. Neither is a
+     * felling cut. Turn the plane on its back and the handle is level, square to the trunk,
+     * with the edge going in sideways.
+     */
+    const ground = plane === 'ground';
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    if (ground) right.setY(0).normalize(); // level, and still across the frame
+    const up = ground
+      ? // Horizontal and towards the viewer, so the blade — which points down the tool's own
+        // -Y — goes AWAY from the camera into the trunk, and the tool works from the near side
+        // where it can be seen.
+        new THREE.Vector3(0, -1, 0).cross(right).normalize()
+      : new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
+    // The tool's own frame: handle along `right`, head raised along `up`, swung about the
+    // normal of the two. For the screen plane this rebuilds the camera's own orientation.
+    const orient = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().makeBasis(right, up, new THREE.Vector3().crossVectors(right, up))
+    );
+    // ...and the way the hand lifts it between stations, which is always actually UP.
+    const lift = ground ? new THREE.Vector3(0, 1, 0) : up;
+
+    /**
+     * The part of the tool that LEADS when it is held at `angle` — the lowest point of the
+     * whole silhouette once it is turned, which is what will touch the target.
+     *
+     * This is the difference between a hammer and a stick. Its head is a flat face one side
+     * and a two-pronged claw the other (an axe, a bit and a poll), so which end goes in first
+     * is decided by the angle, not by the model: hung head-down it lands on its crown, tipped
+     * far enough either way it lands claw- or butt-first. Reading it off the mesh means the
+     * angles can be tuned to taste and the face is still what meets the target.
+     */
+    const leading = (angle: number) => {
+      const sin = Math.sin(angle);
+      const cos = Math.cos(angle);
+      let low = Infinity;
+      const lead = new THREE.Vector2();
+      for (let i = 0; i < points.length; i += 2) {
+        const y = points[i] * sin + points[i + 1] * cos;
+        if (y < low) {
+          low = y;
+          lead.set(points[i], points[i + 1]);
+        }
+      }
+      return lead;
+    };
+
+    const blows = stations.map((spec) => {
+      const handle = THREE.MathUtils.degToRad(spec.handleDeg);
+      // Where THIS blow lands, offset across and down the frame from what it is aimed at.
+      const at = spec.at
+        .clone()
+        .addScaledVector(right, spec.across ?? 0)
+        .addScaledVector(up, -(spec.drop ?? 0));
+      // ...and where the hand has to be for it to. The grip does not travel during a blow —
+      // only the head arcs — so this is one position per blow: back off the landing spot by
+      // whatever leads, turned to the angle the blow lands at. A blow from the other side is
+      // the tool turned over, which mirrors both the pose and that leading point.
+      const lead = leading(handle);
+      const angle = spec.side * handle;
+      const sin = Math.sin(angle);
+      const cos = Math.cos(angle);
+      const reach = spec.side * lead.x;
+      return {
+        angle,
+        at,
+        land: spec.land,
+        // Turned over in the hand for a blow from the right. Rolled about the handle rather
+        // than swung round in the frame: a tool spun 180 in its own plane has its CLAW or its
+        // poll underneath, which is the one thing this rig exists to prevent.
+        roll: spec.side > 0 ? 0 : Math.PI,
+        // Cocked back off its own landing angle, up and over the shoulder it swings from.
+        raised: angle + spec.side * THREE.MathUtils.degToRad(TOOL_SWING.raiseDeg),
+        grip: at
+          .clone()
+          .addScaledVector(right, -(reach * cos - lead.y * sin))
+          .addScaledVector(up, -(reach * sin + lead.y * cos))
+      };
+    });
+
+    // Towards the viewer, so the tool is drawn OVER what it is working on rather than inside
+    // it. Free: the camera is orthographic, so this shifts nothing on screen.
+    const toCamera = new THREE.Vector3(0, 0, 1)
+      .applyQuaternion(this.camera.quaternion)
+      .multiplyScalar(TOOL_SWING.front);
+
+    const model = swung.children[0];
+    const place = (at: THREE.Vector3, angle: number, roll: number) => {
+      swung.position.copy(at).add(toCamera);
+      swung.quaternion.copy(orient);
+      swung.rotateZ(angle);
+      model.rotation.y = roll;
+    };
+    place(blows[0].grip, blows[0].raised, blows[0].roll);
+    swung.scale.setScalar(0.001);
+    swung.visible = true;
+    this.swinging = true;
+
+    let elapsed = 0; // within the CURRENT swing
+    let blow = 0; // which station
+    let tap = 0; // ...and which hit at it
+    let landed = false; // has this one touched down? its landing is worth exactly one frame
+    this.effects.push((delta: number) => {
+      elapsed += delta;
+      const now = blows[blow];
+      const lastTap = tap === TOOL_SWING.taps - 1;
+      const last = blow === blows.length - 1 && lastTap;
+      // Where this swing falls from. The first hit at a position comes down off the full
+      // cock; the second only snaps back part of the way, which is what makes the pair read
+      // as a one-two rather than as two blows that happen to be near each other.
+      const from = tap
+        ? now.angle + (now.raised - now.angle) * TOOL_SWING.quick.raise
+        : now.raised;
+      // ...and how it got there: popped in, carried over from the last position, or simply
+      // bounced off the stone it just hit.
+      const enter = tap ? TOOL_SWING.quick.lift : blow ? TOOL_SWING.lift : TOOL_SWING.pop;
+      const fall = tap ? TOOL_SWING.quick.swing : TOOL_SWING.swing;
+
+      if (elapsed < enter) {
+        const k = 1 - Math.pow(1 - elapsed / enter, 3); // in fast, settling at the top
+        if (tap) {
+          place(now.grip, now.angle + (from - now.angle) * k, now.roll); // snapped back up
+        } else if (!blow) {
+          swung.scale.setScalar(Math.max(0.001, k));
+          place(now.grip, now.raised, now.roll);
+        } else {
+          // Off the last station onto this one: the hand lifts the tool clear, carries it
+          // across — turning it over on the way — and sets it up cocked at the next. The lift
+          // is what keeps the head out of the target: two poses either side of one rock have
+          // a flat travel between them that drags straight through it.
+          const was = blows[blow - 1];
+          place(
+            was.grip
+              .clone()
+              .lerp(now.grip, k)
+              .addScaledVector(lift, Math.sin(Math.PI * k) * TOOL_SWING.carry),
+            was.angle + (now.raised - was.angle) * k,
+            was.roll + (now.roll - was.roll) * k
+          );
+        }
+        return true;
+      }
+
+      // Accelerating into the target rather than easing onto it — a tool is fastest at the
+      // moment it lands.
+      const k = THREE.MathUtils.clamp((elapsed - enter) / fall, 0, 1);
+      place(now.grip, from + (now.angle - from) * k * k, now.roll);
+      if (k < 1) return true;
+
+      // Landed, and only once. Every blow but the very last leaves this branch on the frame it
+      // arrives (the counters below move the swing on); the last one stays in it while the
+      // tool rests and shrinks away, which is what the guard is for.
+      if (!landed) {
+        landed = true;
+        // Grit off the spot it hit, every time — on a finishing blow it goes up with whatever
+        // the target throws of its own, which is bigger and sits on the target not on the hit.
+        this.smoke(now.at.clone(), TOOL_SWING.chip, TOOL_SWING.chipFor);
+        // The last hit at a station is what finishes it: the stone breaks, the tree goes over,
+        // and the run leaves from that frame. It makes its own noise, so the tool's own hit
+        // sound is for every OTHER blow.
+        const finish = lastTap ? now.land : undefined;
+        if (finish) finish();
+        else sfx.play(TOOLS[name].hit);
+      }
+
+      if (!last) {
+        landed = false;
+        if (lastTap) {
+          blow++;
+          tap = 0;
+        } else {
+          tap++;
+        }
+        elapsed = 0;
+        return true;
+      }
+
+      const after = elapsed - enter - fall;
+      if (after < TOOL_SWING.hold) return true;
+
+      const gone = (after - TOOL_SWING.hold) / TOOL_SWING.vanish;
+      swung.scale.setScalar(Math.max(0.001, 1 - gone));
+      if (gone < 1) return true;
+
+      swung.visible = false;
+      this.swinging = false;
+      return false;
+    });
+  }
+
+  /**
+   * The hammer taking the rock: two blows either side of its top, and the stone gives on the
+   * last of them. Both are aimed at one point — the middle of the rock's top — and offset
+   * from there across the frame, so retuning the arc or the rock's size moves them with it.
+   */
+  private hammerRubble(): void {
+    if (!this.breakable) return this.breakRubble();
+
+    const box = new THREE.Box3().setFromObject(this.breakable.pivot);
+    const top = box.getCenter(new THREE.Vector3()).setY(box.max.y);
+
+    this.swingTool(
+      'hammer',
+      TOOL_SWING.stone.map((spec, i) => ({
+        at: top,
+        across: spec.across,
+        drop: i * TOOL_SWING.drop,
+        handleDeg: spec.handleDeg,
+        side: spec.side,
+        land: i === TOOL_SWING.stone.length - 1 ? () => this.breakRubble() : undefined
+      }))
+    );
   }
 
   /**
