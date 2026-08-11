@@ -39,10 +39,15 @@ const BEATS = [
     model: 'assets/models/props/hammer.fbx',
     length: 0.85,
     plane: 'screen', // it comes down the frame onto a rock lying on the ground
-    // One target, hit twice either side of its top.
+    // One blow per ROCK: the tapped one, then the neighbour that breaks with it, which sits
+    // 0.90 to the screen-left of it (a 7-rock 180-degree arc of radius 2, seen at yaw 45).
+    // That separation is a real gap between two targets in the scene — here it rides on
+    // `across`, since these stations are written as offsets from one point.
     stations: [
       { handleDeg: -35, across: 0.26, drop: 0, side: 1 },
-      { handleDeg: -5, across: -0.26, drop: DROP, side: -1 }
+      // Both from the LEFT: side -1 put the hand off the right-hand edge of the frame — see
+      // TOOL_SWING.stone, and check 4 below, which is the one that catches it.
+      { handleDeg: -5, across: -0.90 - 0.26, drop: DROP, side: 1 }
     ],
     // The stone is the tight one for framing: it sits well right of centre in the opening shot.
     onScreen: 1.82,
@@ -151,6 +156,32 @@ for (const beat of BEATS) {
   tool.add(model);
   tool.updateMatrixWorld(true);
 
+  /**
+   * Everything below models a blow from the other side as the tool MIRRORED about the hand:
+   * x negated, y left alone. The rig does it by rolling the model over (place, in swingTool),
+   * so before any of that means anything, the roll has to actually produce that mirror.
+   *
+   * It did not. The slide that puts the hand on the pivot is applied AFTER the roll, so a
+   * rolled tool came out mirrored about a point a grip's length up the handle — every blow
+   * from that side landing short by twice it. Turning the slide over with the model is the
+   * fix; this is what holds it.
+   */
+  const rolled = () => {
+    model.rotation.y = Math.PI;
+    model.position.x = -(-box.min.y * scale); // ...turned over with it
+    tool.updateMatrixWorld(true);
+    const out = [];
+    const v = new THREE.Vector3();
+    for (let i = 0; i < position.count; i++) {
+      v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+      out.push({ x: v.x, y: v.y });
+    }
+    model.rotation.y = 0;
+    model.position.x = -box.min.y * scale;
+    tool.updateMatrixWorld(true);
+    return out;
+  };
+
   // Every vertex in the pivot's frame, keeping the ORIGINAL coordinates alongside so a leading
   // point can be traced back to the part of the tool it belongs to.
   const points = [];
@@ -159,6 +190,8 @@ for (const beat of BEATS) {
     vertex.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
     points.push({ x: vertex.x, y: vertex.y, from: { x: position.getX(i), y: position.getY(i) } });
   }
+
+  const turnedOver = rolled();
 
   /**
    * The part that leads at `angle`. `turn` is the roll about the vertical, as its cosine: 1 is
@@ -173,6 +206,15 @@ for (const beat of BEATS) {
     const low = points.reduce((best, p) => (height(p) < height(best) ? p : best));
     return { x: turn * low.x, y: low.y, from: low.from };
   };
+
+  // The rolled model, vertex for vertex, against the mirror the maths assumes.
+  {
+    const off = points.reduce((worst, p, i) => {
+      const want = { x: -p.x, y: p.y };
+      return Math.max(worst, Math.hypot(turnedOver[i].x - want.x, turnedOver[i].y - want.y));
+    }, 0);
+    assert.ok(off < 1e-6, `${beat.what}: a rolled tool is not the mirror of an upright one — off by ${off.toFixed(2)}u`);
+  }
 
   /** What part of the tool that is, in words. */
   const partOf = (lead) =>
@@ -245,6 +287,23 @@ for (const beat of BEATS) {
     // 2. It lands where it was aimed. The whole placement works backwards from this.
     const missed = landing(blow.angle, blow.grip, blow.side).distanceTo(blow.at);
     assert.ok(missed < 1e-6, `${beat.what}: blow ${i} missed its spot by ${missed.toFixed(3)}u`);
+
+    // ...and the roll has to be inside the search for what leads, not applied to its answer.
+    // Rolling the tool changes WHICH vertex is lowest; mirroring the upright one and working
+    // the grip back from that is what hung the axe off every side -1 trunk. Measured rather
+    // than argued, and only worth measuring where the tool is turned over.
+    if (blow.side < 0) {
+      const upright = leading(blow.angle, 1);
+      const sin = Math.sin(blow.angle);
+      const cos = Math.cos(blow.angle);
+      const mirrored = { x: blow.side * upright.x, y: upright.y };
+      const grip = blow.at
+        .clone()
+        .addScaledVector(right, -(mirrored.x * cos - mirrored.y * sin))
+        .addScaledVector(up, -(mirrored.x * sin + mirrored.y * cos));
+      const gap = landing(blow.angle, grip, blow.side).distanceTo(blow.at);
+      console.log(`  ${beat.what}: blow ${i} is turned over — mirroring the upright lead would miss by ${gap.toFixed(2)}u`);
+    }
 
     // 3. Cocked ABOVE where it lands — full cock and the shorter snap the second of the pair
     // falls from — or the swing has nothing to come down from.

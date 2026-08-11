@@ -588,18 +588,24 @@ const TOOL_SWING = {
   chip: { puffs: 3, size: 0.22, spread: 0.18, rise: 0.25 },
   chipFor: 0.35, // seconds it hangs
   /**
-   * The two blows the hammer puts into the stone, either side of its top. Mirrored because
-   * they have to look like the hammer MOVED: same-side blows can only differ by pitch, and
-   * pitch inside the usable band moves the hand about 0.15 of a unit, which is a hammer
-   * rocking on one spot. Turned over it stands the other side of the stone, a length of its
-   * own clear of the last blow. What rules out swinging BOTH in from the right is the frame —
-   * the stone sits 1.82 right of the opening shot's centre against a 2.45 portrait half-width,
-   * and a blow reaches about 0.6 across, which fits with 0.3 to spare where a hand a whole
-   * hammer-length out to the right would not.
+   * The two blows the hammer puts in, one per ROCK — the tapped one and the neighbour that
+   * breaks with it (hammerRubble picks them; `across` only nudges each blow across the top of
+   * its own). Both are swung from
+   * the LEFT — `side` is which side of the target the hand stands on, and the right is not
+   * available here: the stone sits 1.82 right of the opening shot's centre against a 2.45
+   * portrait half-width, and a blow reaches about 0.6 across, so a hand a whole hammer-length
+   * out to the right of it is off the edge of the frame. The second blow used to be side -1
+   * for the mirror and that is exactly what it did — swung, and half of it was gone.
+   *
+   * They still have to look like the hammer MOVED rather than rocked on one spot, and what
+   * carries that without crossing the frame edge is `across`: +0.26 to -0.26 walks the landing
+   * point 0.52 over the top of the stone, and the hand goes with it, which is about four times
+   * what the change of pitch alone is worth. The pitch change on top of it (steep, then
+   * flatter) is what stops the second looking like the first played twice.
    */
   stone: [
     { handleDeg: -35, across: 0.26, side: 1 as const }, // steep, over from the left
-    { handleDeg: -5, across: -0.26, side: -1 as const } // flatter, turned over and back across
+    { handleDeg: -5, across: -0.26, side: 1 as const } // flatter, and moved across the top
   ],
   drop: 0.06, // each station lands this much lower than the one before, working the target down
   /**
@@ -653,7 +659,7 @@ const TAP_HINT = {
   offsetY: 0.05, // how far the FINGERTIP clears the top of the rock
   delay: 1.2, // seconds before it appears — the cloud intro is still clearing
   fade: 0.35, // seconds to fade in, and again to fade out once tapped
-  cycle: 1.9, // one full press-press-rest before it starts over
+  cycle: 1.2, // one full press-press-rest before it starts over
   gap: 0.55, // seconds between the first press and the second
   press: 0.22, // how long a single press takes
   dip: 0.16 // how far it drops on a press, as a fraction of size
@@ -698,6 +704,11 @@ const TOOL_CHOICE = {
   // gap even though it puts the image's top edge exactly on the button's bottom edge.
   handTip: { x: 0.175, y: 0.075 },
   hint: 1200, // ms before the hand appears, matching TAP_HINT.delay
+  // ms for the hand to SLIDE from one icon to the next when a row has more than one right
+  // answer. It travels a button and a gap — a third of a second reads as a hand being moved
+  // rather than as one blinking out and back in somewhere else. See showToolChoice, which
+  // starts the slide this long BEFORE the press beat so it arrives as the presses begin.
+  slide: 320,
   shake: 400 // ms the wrong tool wobbles for
 };
 
@@ -2779,7 +2790,10 @@ export class IslandScene {
   // The tools, rigged and parked out of sight until a tool choice is answered. `points` is the
   // silhouette as x/y pairs in the pivot's frame — see addTool and swingTool.
   private tools: {
-    [name in keyof typeof TOOLS]?: { pivot: THREE.Group; points: Float32Array };
+    // `grip` is how far along its own handle the model was slid to put the hand on the pivot.
+    // Kept because a blow from the other side turns the model over and that slide has to be
+    // turned over with it — see swingTool's place.
+    [name in keyof typeof TOOLS]?: { pivot: THREE.Group; points: Float32Array; grip: number };
   } = {};
   private swinging = false; // is a tool mid-beat? nothing should ask the player to tap while it is
   // The one rock that answers to a tap, with the tap target worked out from its
@@ -2846,6 +2860,10 @@ export class IslandScene {
   private tapHint?: THREE.Sprite;
   // The button row offering the two tools. Present only while the choice is up.
   private toolChoice?: HTMLDivElement;
+  // The timer walking the pointing hand along a choice row with more than one right answer.
+  // Held so it dies with the row — see clearToolChoice. It is a setTimeout to begin with and
+  // a setInterval after it, hence both being cleared.
+  private handWalk?: number;
   private pointerTexture = new THREE.TextureLoader().load(pointerSrc);
   private woodTexture = new THREE.TextureLoader().load(woodSrc);
   // The crossing: the wreck, the repaired span waiting under it, and the trees
@@ -3446,7 +3464,7 @@ export class IslandScene {
     // crop row is the only one where every icon is a right answer.
     const picks = Array.isArray(onPick) ? onPick : [onPick];
 
-    const [right] = icons.map((src, i) =>
+    const buttons = icons.map((src, i) =>
       button(src, (el) => {
         const pick = picks[i];
         if (!pick) return this.wobbleTool(el);
@@ -3454,6 +3472,10 @@ export class IslandScene {
         pick();
       })
     );
+    // Every icon that actually does something, in the row's own order. The hand walks these
+    // and nothing else: pointing at an icon that only wobbles would be the ad telling the
+    // player to make the one move it refuses.
+    const offered = buttons.filter((_, i) => picks[i]);
 
     document.body.appendChild(row);
     this.toolChoice = row;
@@ -3461,9 +3483,16 @@ export class IslandScene {
     // the transition has nothing to run from
 
     // The same press-press-rest beat as the world tap hint, in the same PNG.
+    //
+    // Two elements, not one: the HOLDER is where it is on the row and the image inside it does
+    // the pressing. Both are transforms, and one element cannot carry two — the slide from
+    // icon to icon would overwrite the press or be overwritten by it, depending on which was
+    // set last.
     const hand = document.createElement('img');
     hand.src = pointerSrc;
-    Object.assign(hand.style, {
+    Object.assign(hand.style, { display: 'block', width: '100%' } as CSSStyleDeclaration);
+    const holder = document.createElement('div');
+    Object.assign(holder.style, {
       position: 'absolute',
       // Overlaid on the button, with the fingertip handOverlay into it. Both terms are in
       // percentages OF THE BUTTON, which is what top/left resolve against: the overlay is
@@ -3476,9 +3505,16 @@ export class IslandScene {
       // and pointed at nothing.
       left: `calc(50% - ${TOOL_CHOICE.hand * TOOL_CHOICE.handTip.x * 100}%)`,
       width: `calc(var(--choice-button) * ${TOOL_CHOICE.hand})`,
-      pointerEvents: 'none'
+      pointerEvents: 'none',
+      // OVER the row, not just over the button it is hung from. Without this the hand paints
+      // in tree order like everything else, so it passes BEHIND every button later in the row
+      // than the one it is currently a child of — which is the whole way back on the wrap from
+      // the last icon to the first. The buttons are position:relative with no z-index of their
+      // own, so they raise nothing against this.
+      zIndex: '1'
     } as CSSStyleDeclaration);
-    right.appendChild(hand);
+    holder.appendChild(hand);
+    offered[0].appendChild(holder);
     hand.animate(
       [
         { transform: 'translateY(0) scale(1)' },
@@ -3490,6 +3526,38 @@ export class IslandScene {
       ],
       { duration: TAP_HINT.cycle * 1000, iterations: Infinity, delay: TOOL_CHOICE.hint }
     );
+
+    // With more than one right answer the hand does not camp on the first icon — it moves
+    // along the row, a press-press-rest at each, so a player who is not going to plant wheat
+    // is still shown that the apples and the carrots are theirs to take. Both obstacles offer
+    // exactly one tool, so nothing changes there: there is nowhere to walk to.
+    //
+    // It TRAVELS between them rather than cutting: the holder is re-parented onto the next
+    // button, which moves it instantly, and then the move is played backwards as a transform
+    // — measure where it was, put it there, animate to nothing. Doing it that way rather than
+    // sliding a number of pixels means the row can be any width, any orientation, and the
+    // hand still lands exactly on the button rather than near it.
+    //
+    // The step is timed to ARRIVE on the beat rather than leave on it: it starts a slide's
+    // length before the cycle turns over, so the hand is coming to rest just as the next
+    // press-press begins on the icon it has reached. The press itself never restarts — it
+    // rides the image from button to button — so the beat stays even across the whole walk.
+    if (offered.length > 1) {
+      let at = 0;
+      const step = () => {
+        const from = holder.getBoundingClientRect().left;
+        offered[(at = (at + 1) % offered.length)].appendChild(holder);
+        const to = holder.getBoundingClientRect().left;
+        holder.animate([{ transform: `translateX(${from - to}px)` }, { transform: 'translateX(0)' }], {
+          duration: TOOL_CHOICE.slide,
+          easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
+        });
+      };
+      this.handWalk = window.setTimeout(() => {
+        step();
+        this.handWalk = window.setInterval(step, TAP_HINT.cycle * 1000);
+      }, TOOL_CHOICE.hint + TAP_HINT.cycle * 1000 - TOOL_CHOICE.slide);
+    }
   }
 
   /**
@@ -4211,6 +4279,12 @@ export class IslandScene {
       if (this.brand) this.brand.style.zIndex = BRAND.zIndex; // back under the overlay layers
       shade.style.opacity = '0';
       window.setTimeout(() => shade.remove(), EXPANSION.cta.dim.fade * 1000);
+    }
+
+    if (this.handWalk !== undefined) {
+      window.clearTimeout(this.handWalk);
+      window.clearInterval(this.handWalk);
+      this.handWalk = undefined;
     }
 
     const row = this.toolChoice;
@@ -7012,7 +7086,7 @@ export class IslandScene {
             points.push(vertex.x, vertex.y);
           }
         });
-        this.tools[name] = { pivot, points: new Float32Array(points) };
+        this.tools[name] = { pivot, points: new Float32Array(points), grip: model.position.x };
       },
       undefined,
       (err: unknown) => console.error(`${name} model failed to load:`, err)
@@ -7049,7 +7123,7 @@ export class IslandScene {
       stations.forEach((station) => station.land?.());
       return;
     }
-    const { pivot: swung, points } = tool;
+    const { pivot: swung, points, grip: onHandle } = tool;
 
     this.hideTapHint();
 
@@ -7093,17 +7167,26 @@ export class IslandScene {
      * is decided by the angle, not by the model: hung head-down it lands on its crown, tipped
      * far enough either way it lands claw- or butt-first. Reading it off the mesh means the
      * angles can be tuned to taste and the face is still what meets the target.
+     *
+     * `turn` is the roll about the tool's own handle, as its cosine: 1 held as rigged, -1
+     * turned over for a blow from the other side. It has to be part of the search rather than
+     * applied to the answer, because rolling the tool changes WHICH vertex is lowest, not just
+     * where that vertex ends up. Mirroring the upright answer instead is what left the axe
+     * hanging a visible gap off the second trunk of every stand: side -1 rolls the head over,
+     * a different corner of the bit leads, and the grip was still being worked back from the
+     * corner that led before it.
      */
-    const leading = (angle: number) => {
+    const leading = (angle: number, turn: number) => {
       const sin = Math.sin(angle);
       const cos = Math.cos(angle);
       let low = Infinity;
       const lead = new THREE.Vector2();
       for (let i = 0; i < points.length; i += 2) {
-        const y = points[i] * sin + points[i + 1] * cos;
+        const x = turn * points[i];
+        const y = x * sin + points[i + 1] * cos;
         if (y < low) {
           low = y;
-          lead.set(points[i], points[i + 1]);
+          lead.set(x, points[i + 1]);
         }
       }
       return lead;
@@ -7119,12 +7202,12 @@ export class IslandScene {
       // ...and where the hand has to be for it to. The grip does not travel during a blow —
       // only the head arcs — so this is one position per blow: back off the landing spot by
       // whatever leads, turned to the angle the blow lands at. A blow from the other side is
-      // the tool turned over, which mirrors both the pose and that leading point.
-      const lead = leading(handle);
+      // the tool turned over, so the pose AND the search for what leads are both taken at
+      // that roll — see leading.
       const angle = spec.side * handle;
+      const lead = leading(angle, spec.side);
       const sin = Math.sin(angle);
       const cos = Math.cos(angle);
-      const reach = spec.side * lead.x;
       return {
         angle,
         at,
@@ -7137,8 +7220,8 @@ export class IslandScene {
         raised: angle + spec.side * THREE.MathUtils.degToRad(TOOL_SWING.raiseDeg),
         grip: at
           .clone()
-          .addScaledVector(right, -(reach * cos - lead.y * sin))
-          .addScaledVector(up, -(reach * sin + lead.y * cos))
+          .addScaledVector(right, -(lead.x * cos - lead.y * sin))
+          .addScaledVector(up, -(lead.x * sin + lead.y * cos))
       };
     });
 
@@ -7154,6 +7237,13 @@ export class IslandScene {
       swung.quaternion.copy(orient);
       swung.rotateZ(angle);
       model.rotation.y = roll;
+      // The roll turns the model about its own middle, and the slide that put the HAND on the
+      // pivot (addTool) is applied after it — so a rolled tool is mirrored about a point a
+      // grip's length up the handle instead of about the hand, and lands short of everything
+      // it is aimed at by twice that. On the axe it is 0.39 of a unit, which is the gap that
+      // used to hang off the second trunk of every stand: turning the slide over with the
+      // model is what closes it, and what makes the mirror the blows are solved for real.
+      model.position.x = roll ? -onHandle : onHandle;
     };
     place(blows[0].grip, blows[0].raised, blows[0].roll);
     swung.scale.setScalar(0.001);
@@ -7260,13 +7350,26 @@ export class IslandScene {
   private hammerRubble(): void {
     if (!this.breakable) return this.breakRubble();
 
-    const box = new THREE.Box3().setFromObject(this.breakable.pivot);
-    const top = box.getCenter(new THREE.Vector3()).setY(box.max.y);
+    // A blow on each of the rocks that GOES: the tapped one first, then its neighbour, so the
+    // break that follows is one the player has watched being worked at rather than a rock
+    // popping out beside the two hits.
+    //
+    // Which neighbour is not a taste question — it is the frame. The arc is centred on the
+    // pair and this rock sits on its middle at 1.82 right of the shot's centre, with 0.63 of
+    // room left that side; the two beside it sit 0.9 to the screen-left and 0.5 further RIGHT,
+    // and a blow reaches about 0.6 across. Only the left-hand one has anywhere for the hand to
+    // be. Down-index is that one, and it is the fallback's job to notice when it is not there.
+    const { index } = this.breakable;
+    const tops = TOOL_SWING.stone.map((_, i) => {
+      const rock = this.rocks[index - i] ?? this.rocks[index];
+      const box = new THREE.Box3().setFromObject(rock.pivot);
+      return box.getCenter(new THREE.Vector3()).setY(box.max.y);
+    });
 
     this.swingTool(
       'hammer',
       TOOL_SWING.stone.map((spec, i) => ({
-        at: top,
+        at: tops[i],
         across: spec.across,
         drop: i * TOOL_SWING.drop,
         handleDeg: spec.handleDeg,
